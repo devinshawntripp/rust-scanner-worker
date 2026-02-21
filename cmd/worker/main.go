@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+    "os/exec"
 	"log"
 	"net/http"
 	"os"
@@ -33,6 +34,16 @@ func main() {
 
 	s3, err := s3c.New(cfg.S3Endpoint, cfg.S3AccessKey, cfg.S3SecretKey, cfg.S3UseSSL)
 	if err != nil { log.Fatal(err) }
+
+    // Print scanner version/help at startup for verification
+    cmd := exec.CommandContext(ctx, cfg.ScannerPath, "--version")
+    out, err := cmd.CombinedOutput()
+    if err != nil {
+        log.Printf("scanner --help failed: %v", err)
+    }
+    if len(out) > 0 {
+        log.Printf("scanner help:\n%s", string(out))
+    }
 
 	// healthz
 	if addr := cfg.HTTPAddr; addr != "" {

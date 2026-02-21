@@ -24,8 +24,10 @@ profile.cov
 go.work
 go.work.sum
 
-# env file
+# env files (never commit credentials)
 .env
+.env.*
+.env.bak
 
 # Editor/IDE
 # .idea/

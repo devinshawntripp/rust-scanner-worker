@@ -3,18 +3,20 @@ package db
 import (
 	"context"
 	"errors"
-    "strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-type Store struct { Conn *pgx.Conn }
+type Store struct{ Pool *pgxpool.Pool }
 
 func Open(ctx context.Context, url string) (*Store, error) {
-    c, err := pgx.Connect(ctx, url)
-    if err != nil { return nil, err }
-    return &Store{Conn: c}, nil
+	p, err := pgxpool.New(ctx, url)
+	if err != nil {
+		return nil, err
+	}
+	return &Store{Pool: p}, nil
 }
 
 type Job struct {
@@ -32,9 +34,19 @@ type Job struct {
 	ErrorMsg     *string
 }
 
+func (s *Store) InsertEvent(ctx context.Context, jobID string, ts time.Time, stage, detail string, pct *int) error {
+	_, err := s.Pool.Exec(ctx, `
+        INSERT INTO scan_events (job_id, ts, stage, detail, pct)
+        VALUES ($1, $2, $3, $4, $5)
+    `, jobID, ts, stage, detail, pct)
+	return err
+}
+
 func (s *Store) AcquireNextQueued(ctx context.Context) (*Job, error) {
-    tx, err := s.Conn.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil { return nil, err }
+	tx, err := s.Pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return nil, err
+	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	row := tx.QueryRow(ctx, `
@@ -52,92 +64,109 @@ func (s *Store) AcquireNextQueued(ctx context.Context) (*Job, error) {
 		}
 		return nil, err
 	}
-    _, err = tx.Exec(ctx, `
+	_, err = tx.Exec(ctx, `
 		UPDATE scan_jobs
 		SET status='running', started_at=now(), progress_pct=0, progress_msg='starting'
 		WHERE id=$1
 	`, j.ID)
-	if err != nil { return nil, err }
-	if err := tx.Commit(ctx); err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
 	j.Status = "running"
 	return &j, nil
 }
 
 func (s *Store) UpdateProgress(ctx context.Context, id string, pct int, msg string) error {
-    _, err := s.Conn.Exec(ctx, `
+	_, err := s.Pool.Exec(ctx, `
 		UPDATE scan_jobs
-		SET progress_pct=$2, progress_msg=$3
+		SET progress_pct=GREATEST(progress_pct, $2),
+		    progress_msg=CASE WHEN $2 >= progress_pct THEN $3 ELSE progress_msg END
 		WHERE id=$1
+		  AND status='running'
 	`, id, pct, msg)
-    if err == nil { return nil }
-    // If connection is closed, attempt a single reconnect and retry
-    if isConnClosed(err) {
-        if recErr := s.reconnect(ctx); recErr == nil {
-            _, err = s.Conn.Exec(ctx, `
-                UPDATE scan_jobs SET progress_pct=$2, progress_msg=$3 WHERE id=$1
-            `, id, pct, msg)
-        }
-    }
-    return err
+	return err
 }
 
 func (s *Store) MarkFailed(ctx context.Context, id, errMsg string) error {
-    _, err := s.Conn.Exec(ctx, `
+	_, err := s.Pool.Exec(ctx, `
 		UPDATE scan_jobs
-		SET status='failed', finished_at=now(), error_msg=$2
+		SET status='failed',
+		    finished_at=now(),
+		    error_msg=$2,
+		    progress_msg=COALESCE(progress_msg, $2)
 		WHERE id=$1
+		  AND status IN ('queued','running')
 	`, id, errMsg)
-    if err == nil { return nil }
-    if isConnClosed(err) {
-        if recErr := s.reconnect(ctx); recErr == nil {
-            _, err = s.Conn.Exec(ctx, `
-                UPDATE scan_jobs SET status='failed', finished_at=now(), error_msg=$2 WHERE id=$1
-            `, id, errMsg)
-        }
-    }
-    return err
+	return err
 }
 
 func (s *Store) MarkDone(ctx context.Context, id string, reportBucket, reportKey string, summaryJSON []byte) error {
-    // Cast to jsonb to ensure proper type instead of bytea
-    _, err := s.Conn.Exec(ctx, `
+	// Cast to jsonb to ensure proper type instead of bytea
+	_, err := s.Pool.Exec(ctx, `
 		UPDATE scan_jobs
 		SET status='done', finished_at=now(),
 		    progress_pct=100, progress_msg='completed',
             report_bucket=$2, report_key=$3, summary_json=$4::jsonb
 		WHERE id=$1
     `, id, reportBucket, reportKey, string(summaryJSON))
-    if err == nil { return nil }
-    if isConnClosed(err) {
-        if recErr := s.reconnect(ctx); recErr == nil {
-            _, err = s.Conn.Exec(ctx, `
-                UPDATE scan_jobs SET status='done', finished_at=now(), progress_pct=100, progress_msg='completed', report_bucket=$2, report_key=$3, summary_json=$4::jsonb WHERE id=$1
-            `, id, reportBucket, reportKey, string(summaryJSON))
-        }
-    }
-    return err
+	return err
 }
 
 func (s *Store) Ping(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-    return s.Conn.Ping(ctx)
+	return s.Pool.Ping(ctx)
 }
 
-func (s *Store) reconnect(ctx context.Context) error {
-    // Use the same config to reconnect
-    cfg := s.Conn.Config()
-    // Close existing conn just in case
-    _ = s.Conn.Close(ctx)
-    c, err := pgx.ConnectConfig(ctx, cfg)
-    if err != nil { return err }
-    s.Conn = c
-    return nil
-}
+func (s *Store) FailStaleRunning(ctx context.Context, idleFor time.Duration) ([]string, error) {
+	seconds := int64(idleFor.Seconds())
+	if seconds <= 0 {
+		return nil, nil
+	}
+	rows, err := s.Pool.Query(ctx, `
+		WITH stale AS (
+			SELECT j.id
+			FROM scan_jobs j
+			LEFT JOIN LATERAL (
+				SELECT MAX(ts) AS last_event_ts
+				FROM scan_events e
+				WHERE e.job_id = j.id
+			) ev ON true
+			WHERE j.status='running'
+			  AND COALESCE(ev.last_event_ts, j.started_at, j.created_at) < now() - (
+				CASE
+					WHEN j.progress_pct >= 95 THEN ($1::bigint * 4)
+					ELSE $1::bigint
+				END * interval '1 second'
+			  )
+		)
+		UPDATE scan_jobs j
+		SET status='failed',
+		    finished_at=now(),
+		    error_msg='worker timeout: no progress heartbeat',
+		    progress_msg='worker timeout: no progress heartbeat'
+		FROM stale
+		WHERE j.id = stale.id
+		RETURNING j.id::text
+	`, seconds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
 
-func isConnClosed(err error) bool {
-    if err == nil { return false }
-    // pgx v5 does not export ErrClosed on Conn; match by message
-    // observed error text: "conn closed"
-    return strings.Contains(strings.ToLower(err.Error()), "conn closed")
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return ids, nil
 }
