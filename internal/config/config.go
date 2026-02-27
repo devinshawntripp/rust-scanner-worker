@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 )
 
 type Config struct {
@@ -21,8 +22,11 @@ type Config struct {
 	WorkerConcurrency      int
 	StaleJobTimeoutSeconds int
 	StaleSweepSeconds      int
-	WorkerHeartbeatSeconds int
-	HTTPAddr               string
+	WorkerHeartbeatSeconds    int
+	ScannerTimeoutSeconds     int
+	MaxArtifactBytes          int64
+	WorkerIngestTimeoutSeconds int
+	HTTPAddr                  string
 }
 
 func getBool(key, def string) bool {
@@ -49,6 +53,18 @@ func getInt(key string, def int) int {
 	return n
 }
 
+func getInt64(key string, def int64) int64 {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return def
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return def
+	}
+	return n
+}
+
 func Load() Config {
 	cfg := Config{
 		DatabaseURL:            os.Getenv("DATABASE_URL"),
@@ -64,8 +80,11 @@ func Load() Config {
 		WorkerConcurrency:      getInt("WORKER_CONCURRENCY", 2),
 		StaleJobTimeoutSeconds: getInt("WORKER_STALE_JOB_TIMEOUT_SECONDS", 1800),
 		StaleSweepSeconds:      getInt("WORKER_STALE_SWEEP_SECONDS", 60),
-		WorkerHeartbeatSeconds: getInt("WORKER_HEARTBEAT_SECONDS", 60),
-		HTTPAddr:               os.Getenv("HTTP_ADDR"),
+		WorkerHeartbeatSeconds:     getInt("WORKER_HEARTBEAT_SECONDS", 60),
+		ScannerTimeoutSeconds:     getInt("SCANNER_TIMEOUT_SECONDS", 1800),
+		MaxArtifactBytes:          getInt64("MAX_ARTIFACT_BYTES", 10737418240),
+		WorkerIngestTimeoutSeconds: getInt("WORKER_INGEST_TIMEOUT_SECONDS", 300),
+		HTTPAddr:                  os.Getenv("HTTP_ADDR"),
 	}
 	// quick sanity
 	if cfg.DatabaseURL == "" {
@@ -85,6 +104,15 @@ func Load() Config {
 	}
 	if cfg.WorkerHeartbeatSeconds <= 0 {
 		cfg.WorkerHeartbeatSeconds = 60
+	}
+	if cfg.ScannerTimeoutSeconds <= 0 {
+		cfg.ScannerTimeoutSeconds = 1800
+	}
+	if cfg.MaxArtifactBytes <= 0 {
+		cfg.MaxArtifactBytes = 10737418240 // 10 GiB
+	}
+	if cfg.WorkerIngestTimeoutSeconds <= 0 {
+		cfg.WorkerIngestTimeoutSeconds = 300
 	}
 	if cfg.UploadsBucket == "" || cfg.ReportsBucket == "" {
 		log.Fatal("UPLOADS_BUCKET and REPORTS_BUCKET are required")
