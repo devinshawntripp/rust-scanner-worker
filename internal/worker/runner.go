@@ -29,6 +29,20 @@ type Runner struct {
 	s3  *s3.Client
 }
 
+type scannerSettingsSnapshot struct {
+	ModeDefault                   string `json:"mode_default"`
+	LightAllowHeuristicFallback   bool   `json:"light_allow_heuristic_fallback"`
+	DeepRequireInstalledInventory bool   `json:"deep_require_installed_inventory"`
+	NVDEnrichEnabled              bool   `json:"nvd_enrich_enabled"`
+	OSVEnrichEnabled              bool   `json:"osv_enrich_enabled"`
+	RedHatEnrichEnabled           bool   `json:"redhat_enrich_enabled"`
+	SkipCache                     bool   `json:"skip_cache"`
+	NVDConcurrency                int    `json:"nvd_concurrency"`
+	NVDRetryMax                   int    `json:"nvd_retry_max"`
+	NVDTimeoutSecs                int    `json:"nvd_timeout_secs"`
+	GlobalNVDRatePerMinute        int    `json:"global_nvd_rate_per_minute"`
+}
+
 func NewRunner(cfg config.Config, store *db.Store, s3c *s3.Client) *Runner {
 	return &Runner{cfg: cfg, db: store, s3: s3c}
 }
@@ -130,6 +144,9 @@ func (r *Runner) processJob(ctx context.Context, j *db.Job) error {
 	args = append(args, "--mode", j.Mode)
 
 	cmd := exec.CommandContext(ctx, r.cfg.ScannerPath, args...)
+	// Platform scans should retain full file tree output for Files API/UI.
+	baseEnv := append(os.Environ(), "SCANNER_INCLUDE_FILE_TREE=1")
+	cmd.Env = append(baseEnv, buildScannerEnvFromSettings(j.SettingsJSON, j.Mode)...)
 	log.Printf("job %s: exec: %s %s", j.ID, r.cfg.ScannerPath, strings.Join(args, " "))
 	var scannerStdout, scannerStderr strings.Builder
 	cmd.Stdout = &scannerStdout
@@ -171,16 +188,50 @@ func (r *Runner) processJob(ctx context.Context, j *db.Job) error {
 		log.Printf("job %s: update progress final failed: %v", j.ID, err)
 	}
 
-	// Extract a small summary for DB
-	var summary struct {
-		Summary model.Summary `json:"summary"`
-	}
+	// Extract summary + normalized artifacts for DB-backed findings/files APIs.
 	if b, err := os.ReadFile(reportPath); err == nil {
-		_ = json.Unmarshal(b, &summary)
+		var report model.ScanReport
+		if err := json.Unmarshal(b, &report); err != nil {
+			log.Printf("job %s: failed to parse report json: %v", j.ID, err)
+		}
+
+		if len(report.Files) == 0 {
+			if st, err := os.Stat(inputPath); err == nil {
+				size := st.Size()
+				report.Files = append(report.Files, model.FileRow{
+					Path:       baseName,
+					EntryType:  "file",
+					SizeBytes:  &size,
+					ParentPath: "",
+				})
+			}
+		}
+
+		ingestCtx, ingestCancel := context.WithTimeout(context.Background(), 90*time.Second)
+		if err := r.db.ReplaceJobArtifacts(ingestCtx, j.ID, &report); err != nil {
+			ingestCancel()
+			log.Printf("job %s: artifact ingest failed: %v", j.ID, err)
+			_ = r.db.MarkFailed(ctx, j.ID, "artifact ingest: "+err.Error())
+			return err
+		}
+		ingestCancel()
+
 		// store only the small summary in SQL, full report stays in object storage
-		sumBytes, _ := json.Marshal(summary.Summary)
+		sumBytes, _ := json.Marshal(report.Summary)
+		scanStatus := optionalString(report.ScanStatus)
+		inventoryStatus := optionalString(report.InventoryStatus)
+		inventoryReason := optionalString(report.InventoryReason)
 		dbctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		err := r.db.MarkDone(dbctx, j.ID, r.cfg.ReportsBucket, reportKey, sumBytes)
+		err := r.db.MarkDone(
+			dbctx,
+			j.ID,
+			r.cfg.ReportsBucket,
+			reportKey,
+			sumBytes,
+			scanStatus,
+			inventoryStatus,
+			inventoryReason,
+		)
 		cancel()
 		if err != nil {
 			log.Printf("job %s: mark done error: %v", j.ID, err)
@@ -193,7 +244,7 @@ func (r *Runner) processJob(ctx context.Context, j *db.Job) error {
 	// no summary? still mark done with empty summary
 	{
 		dbctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		err := r.db.MarkDone(dbctx, j.ID, r.cfg.ReportsBucket, reportKey, []byte(`{}`))
+		err := r.db.MarkDone(dbctx, j.ID, r.cfg.ReportsBucket, reportKey, []byte(`{}`), nil, nil, nil)
 		cancel()
 		if err != nil {
 			log.Printf("job %s: mark done error: %v", j.ID, err)
@@ -203,6 +254,62 @@ func (r *Runner) processJob(ctx context.Context, j *db.Job) error {
 	}
 	log.Printf("job %s: completed (no summary) and marked done (report=%s)", j.ID, reportKey)
 	return nil
+}
+
+func optionalString(v string) *string {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return nil
+	}
+	return &v
+}
+
+func boolEnvValue(v bool) string {
+	if v {
+		return "1"
+	}
+	return "0"
+}
+
+func buildScannerEnvFromSettings(raw []byte, mode string) []string {
+	if len(raw) == 0 {
+		return nil
+	}
+
+	var s scannerSettingsSnapshot
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return nil
+	}
+
+	out := []string{
+		"SCANNER_NVD_ENRICH=" + boolEnvValue(s.NVDEnrichEnabled),
+		"SCANNER_OSV_ENRICH=" + boolEnvValue(s.OSVEnrichEnabled),
+		"SCANNER_REDHAT_ENRICH=" + boolEnvValue(s.RedHatEnrichEnabled),
+		"SCANNER_SKIP_CACHE=" + boolEnvValue(s.SkipCache),
+		"SCANNER_LIGHT_ALLOW_HEURISTIC_FALLBACK=" + boolEnvValue(s.LightAllowHeuristicFallback),
+		"SCANNER_DEEP_REQUIRE_INSTALLED_INVENTORY=" + boolEnvValue(s.DeepRequireInstalledInventory),
+	}
+	if s.NVDConcurrency > 0 {
+		out = append(out, fmt.Sprintf("SCANNER_NVD_CONC=%d", s.NVDConcurrency))
+	}
+	if s.NVDRetryMax > 0 {
+		out = append(out, fmt.Sprintf("SCANNER_NVD_RETRY_MAX=%d", s.NVDRetryMax))
+	}
+	if s.NVDTimeoutSecs > 0 {
+		out = append(out, fmt.Sprintf("SCANNER_NVD_TIMEOUT_SECS=%d", s.NVDTimeoutSecs))
+	}
+	if s.GlobalNVDRatePerMinute > 0 {
+		out = append(out, fmt.Sprintf("SCANNER_NVD_GLOBAL_RATE_PER_MINUTE=%d", s.GlobalNVDRatePerMinute))
+	}
+
+	normalizedMode := strings.ToLower(strings.TrimSpace(mode))
+	if normalizedMode == "deep" {
+		out = append(out, "SCANNER_SCAN_MODE=deep")
+	} else if normalizedMode == "light" {
+		out = append(out, "SCANNER_SCAN_MODE=light")
+	}
+
+	return out
 }
 
 func downloadPct(readBytes, totalBytes int64) int {
