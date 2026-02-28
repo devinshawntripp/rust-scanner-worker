@@ -226,6 +226,11 @@ func (r *Runner) processJob(ctx context.Context, j *db.Job) error {
 	}
 
 	// Upload the report with retry (3 attempts, 200ms base delay)
+	{
+		p := 88
+		_ = r.db.UpdateProgress(ctx, j.ID, p, "report.upload.start")
+		_ = r.db.InsertEvent(ctx, j.ID, time.Now(), "report.upload.start", "uploading report to S3", &p)
+	}
 	reportKey := fmt.Sprintf("reports/%s.json", j.ID)
 	uploadErr := retry(ctx, 3, 200*time.Millisecond, func() error {
 		return r.s3.UploadFile(ctx, r.cfg.ReportsBucket, reportKey, reportPath, "application/json")
@@ -271,6 +276,11 @@ func (r *Runner) processJob(ctx context.Context, j *db.Job) error {
 	}
 
 	// Artifact ingest with retry (2 attempts, 200ms base delay)
+	{
+		p := 92
+		_ = r.db.UpdateProgress(ctx, j.ID, p, "ingest.start")
+		_ = r.db.InsertEvent(ctx, j.ID, time.Now(), "ingest.start", "writing findings/files/packages to database", &p)
+	}
 	ingestTimeout := time.Duration(r.cfg.WorkerIngestTimeoutSeconds) * time.Second
 	ingestErr := retry(ctx, 2, 200*time.Millisecond, func() error {
 		ingestCtx, ingestCancel := context.WithTimeout(context.Background(), ingestTimeout)
