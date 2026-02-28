@@ -33,16 +33,26 @@ type Runner struct {
 
 type scannerSettingsSnapshot struct {
 	ModeDefault                  string `json:"mode_default"`
-	LightAllowHeuristicFallback bool   `json:"light_allow_heuristic_fallback"`
-	DeepRequireInstalledInventory bool  `json:"deep_require_installed_inventory"`
+	LightAllowHeuristicFallback  bool   `json:"light_allow_heuristic_fallback"`
+	DeepRequireInstalledInventory bool   `json:"deep_require_installed_inventory"`
 	NVDEnrichEnabled             bool   `json:"nvd_enrich_enabled"`
 	OSVEnrichEnabled             bool   `json:"osv_enrich_enabled"`
 	RedHatEnrichEnabled          bool   `json:"redhat_enrich_enabled"`
+	EPSSEnrichEnabled            bool   `json:"epss_enrich_enabled"`
+	KEVEnrichEnabled             bool   `json:"kev_enrich_enabled"`
+	DebianTrackerEnabled         bool   `json:"debian_tracker_enabled"`
+	UbuntuTrackerEnabled         bool   `json:"ubuntu_tracker_enabled"`
+	AlpineSecDBEnabled           bool   `json:"alpine_secdb_enabled"`
+	RedHatUnfixedEnabled         bool   `json:"redhat_unfixed_enabled"`
 	SkipCache                    bool   `json:"skip_cache"`
+	NVDAPIKey                    string `json:"nvd_api_key"`
 	NVDConcurrency               int    `json:"nvd_concurrency"`
 	NVDRetryMax                  int    `json:"nvd_retry_max"`
 	NVDTimeoutSecs               int    `json:"nvd_timeout_secs"`
 	GlobalNVDRatePerMinute       int    `json:"global_nvd_rate_per_minute"`
+	OSVBatchSize                 int    `json:"osv_batch_size"`
+	OSVTimeoutSecs               int    `json:"osv_timeout_secs"`
+	RedHatCVEConcurrency         int    `json:"redhat_cve_concurrency"`
 }
 
 func NewRunner(cfg config.Config, store *db.Store, s3c *s3.Client) *Runner {
@@ -456,9 +466,19 @@ func buildScannerEnvFromSettings(raw []byte, mode string) []string {
 		"SCANNER_NVD_ENRICH=" + boolEnvValue(s.NVDEnrichEnabled),
 		"SCANNER_OSV_ENRICH=" + boolEnvValue(s.OSVEnrichEnabled),
 		"SCANNER_REDHAT_ENRICH=" + boolEnvValue(s.RedHatEnrichEnabled),
+		"SCANNER_EPSS_ENRICH=" + boolEnvValue(s.EPSSEnrichEnabled),
+		"SCANNER_KEV_ENRICH=" + boolEnvValue(s.KEVEnrichEnabled),
+		"SCANNER_DEBIAN_TRACKER_ENRICH=" + boolEnvValue(s.DebianTrackerEnabled),
+		"SCANNER_UBUNTU_TRACKER_ENRICH=" + boolEnvValue(s.UbuntuTrackerEnabled),
+		"SCANNER_ALPINE_SECDB_ENRICH=" + boolEnvValue(s.AlpineSecDBEnabled),
+		// SCANNER_REDHAT_UNFIXED_SKIP is inverted: enabled=true means skip=false
+		"SCANNER_REDHAT_UNFIXED_SKIP=" + boolEnvValue(!s.RedHatUnfixedEnabled),
 		"SCANNER_SKIP_CACHE=" + boolEnvValue(s.SkipCache),
 		"SCANNER_LIGHT_ALLOW_HEURISTIC_FALLBACK=" + boolEnvValue(s.LightAllowHeuristicFallback),
 		"SCANNER_DEEP_REQUIRE_INSTALLED_INVENTORY=" + boolEnvValue(s.DeepRequireInstalledInventory),
+	}
+	if s.NVDAPIKey != "" {
+		out = append(out, "NVD_API_KEY="+s.NVDAPIKey)
 	}
 	if s.NVDConcurrency > 0 {
 		out = append(out, fmt.Sprintf("SCANNER_NVD_CONC=%d", s.NVDConcurrency))
@@ -471,6 +491,15 @@ func buildScannerEnvFromSettings(raw []byte, mode string) []string {
 	}
 	if s.GlobalNVDRatePerMinute > 0 {
 		out = append(out, fmt.Sprintf("SCANNER_NVD_GLOBAL_RATE_PER_MINUTE=%d", s.GlobalNVDRatePerMinute))
+	}
+	if s.OSVBatchSize > 0 {
+		out = append(out, fmt.Sprintf("SCANNER_OSV_BATCH_SIZE=%d", s.OSVBatchSize))
+	}
+	if s.OSVTimeoutSecs > 0 {
+		out = append(out, fmt.Sprintf("SCANNER_OSV_TIMEOUT_SECS=%d", s.OSVTimeoutSecs))
+	}
+	if s.RedHatCVEConcurrency > 0 {
+		out = append(out, fmt.Sprintf("SCANNER_REDHAT_CVE_CONC=%d", s.RedHatCVEConcurrency))
 	}
 
 	normalizedMode := strings.ToLower(strings.TrimSpace(mode))
