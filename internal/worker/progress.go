@@ -244,18 +244,22 @@ func TailProgress(ctx context.Context, st *db.Store, jobID, progressPath string)
 	var stopped atomic.Bool
 	go func() {
 		defer stopped.Store(true)
-		// Wait for the progress file to appear for a short time window
+		// Wait for the progress file to appear. Poll every 500ms until the
+		// file is created or the scan context is cancelled.  Previously this
+		// gave up after only 4 seconds which was too short for scans where the
+		// scanner takes a while before writing its first progress event (e.g.
+		// large file hashing, slow cloud enrichment check, unsupported formats).
 		var f *os.File
-		var err error
-		for i := 0; i < 40 && ctx.Err() == nil; i++ { // ~4s
+		for ctx.Err() == nil {
+			var err error
 			f, err = os.Open(progressPath)
 			if err == nil {
 				break
 			}
-			time.Sleep(100 * time.Millisecond)
+			time.Sleep(500 * time.Millisecond)
 		}
 		if f == nil {
-			log.Printf("job %s: progress file not found, continuing without tail", jobID)
+			log.Printf("job %s: progress file not found (context cancelled), ending tail", jobID)
 			return
 		}
 		defer f.Close()
