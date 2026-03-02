@@ -173,7 +173,7 @@ func (r *Runner) processJob(ctx context.Context, j *db.Job) error {
 		log.Printf("job %s: input size=%dB sha256=%s head=%s", j.ID, meta.Size, meta.SHA256Short, meta.HeadHex)
 	}
 
-	// Place global flags before the subcommand (per scanner CLI expectations)
+	// Place global flags before the subcommand (per scanrook CLI expectations)
 	args := []string{
 		"--progress", "--progress-file", progressPath,
 		"scan", "--file", inputPath,
@@ -206,23 +206,23 @@ func (r *Runner) processJob(ctx context.Context, j *db.Job) error {
 	defer stopTail()
 
 	if err := cmd.Start(); err != nil {
-		log.Printf("job %s: scanner start error: %v", j.ID, err)
-		return fmt.Errorf("start scanner: %w", err)
+		log.Printf("job %s: scanrook start error: %v", j.ID, err)
+		return fmt.Errorf("start scanrook: %w", err)
 	}
 	scanErr := cmd.Wait()
 	if s := strings.TrimSpace(scannerStdout.String()); s != "" {
-		log.Printf("job %s: scanner stdout: %s", j.ID, s)
+		log.Printf("job %s: scanrook stdout: %s", j.ID, s)
 	}
 	if s := strings.TrimSpace(scannerStderr.String()); s != "" {
-		log.Printf("job %s: scanner stderr: %s", j.ID, s)
+		log.Printf("job %s: scanrook stderr: %s", j.ID, s)
 	}
 	if scanErr != nil {
 		if scanCtx.Err() == context.DeadlineExceeded {
-			log.Printf("job %s: scanner timed out after %s", j.ID, scanTimeout)
-			return fmt.Errorf("scanner timed out after %s", scanTimeout)
+			log.Printf("job %s: scanrook timed out after %s", j.ID, scanTimeout)
+			return fmt.Errorf("scanrook timed out after %s", scanTimeout)
 		}
-		log.Printf("job %s: scanner failed: %v", j.ID, scanErr)
-		return fmt.Errorf("scanner failed: %w", scanErr)
+		log.Printf("job %s: scanrook failed: %v", j.ID, scanErr)
+		return fmt.Errorf("scanrook failed: %w", scanErr)
 	}
 
 	// Upload the report with retry (3 attempts, 200ms base delay)

@@ -50,14 +50,14 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// Print scanner version/help at startup for verification
+	// Print scanrook version at startup for verification
 	cmd := exec.CommandContext(ctx, cfg.ScannerPath, "--version")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		log.Printf("scanner --help failed: %v", err)
+		log.Printf("scanrook --version failed: %v", err)
 	}
 	if len(out) > 0 {
-		log.Printf("scanner help:\n%s", string(out))
+		log.Printf("scanrook version:\n%s", string(out))
 	}
 
 	// healthz — checks DB connectivity with a 2s timeout; returns 503 if unreachable

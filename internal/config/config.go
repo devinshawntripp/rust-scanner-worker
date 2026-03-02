@@ -94,7 +94,7 @@ func Load() Config {
 		cfg.ScratchDir = "/scratch"
 	}
 	if cfg.ScannerPath == "" {
-		cfg.ScannerPath = "/usr/local/bin/scanner"
+		cfg.ScannerPath = "/usr/local/bin/scanrook"
 	}
 	if cfg.StaleJobTimeoutSeconds <= 0 {
 		cfg.StaleJobTimeoutSeconds = 1800

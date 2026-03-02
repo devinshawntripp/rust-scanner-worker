@@ -32,6 +32,7 @@ RUN chmod +x /usr/local/bin/entrypoint.sh
 ENV SCRATCH_DIR=/scratch \
     SCANNER_PATH=/usr/local/bin/scanrook
 
-RUN mkdir -p /scratch
+RUN mkdir -p /scratch && \
+    chmod 1777 /usr/local/bin
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
