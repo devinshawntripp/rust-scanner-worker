@@ -301,7 +301,11 @@ func TailProgress(ctx context.Context, st *db.Store, jobID, progressPath string)
 					if shouldPersistEvent(evt.Stage, p, eventTS, lastEventAtByGroup, lastEventPctByGroup) {
 						pctPtr := new(int)
 						*pctPtr = p
-						_ = st.InsertEvent(ctx, jobID, eventTS, evt.Stage, evt.Detail, pctPtr)
+						detail := evt.Detail
+						if evt.Stage == "scan.pipeline" && len(evt.Pipeline) > 0 {
+							detail = string(evt.Pipeline)
+						}
+						_ = st.InsertEvent(ctx, jobID, eventTS, evt.Stage, detail, pctPtr)
 					}
 					if strings.Contains(evt.Stage, "scan.done") {
 						break

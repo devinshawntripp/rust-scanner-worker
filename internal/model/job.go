@@ -1,10 +1,13 @@
 package model
 
+import "encoding/json"
+
 type ProgressEvent struct {
-	Stage  string `json:"stage"`
-	Detail string `json:"detail"`
-	TS     string `json:"ts"`
-	Pct    *int   `json:"pct,omitempty"`
+	Stage    string          `json:"stage"`
+	Detail   string          `json:"detail"`
+	TS       string          `json:"ts"`
+	Pct      *int            `json:"pct,omitempty"`
+	Pipeline json.RawMessage `json:"pipeline,omitempty"`
 }
 
 type Summary struct {
