@@ -4,6 +4,7 @@ type ProgressEvent struct {
 	Stage  string `json:"stage"`
 	Detail string `json:"detail"`
 	TS     string `json:"ts"`
+	Pct    *int   `json:"pct,omitempty"`
 }
 
 type Summary struct {

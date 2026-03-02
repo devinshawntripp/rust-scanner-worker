@@ -607,6 +607,22 @@ BEGIN
   END IF;
 END$$;
 
+CREATE OR REPLACE FUNCTION notify_scan_event() RETURNS trigger AS $$
+BEGIN
+  PERFORM pg_notify('scan_events', NEW.job_id::text);
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'scan_events_notify') THEN
+    CREATE TRIGGER scan_events_notify
+    AFTER INSERT ON scan_events
+    FOR EACH ROW EXECUTE FUNCTION notify_scan_event();
+  END IF;
+END$$;
+
 CREATE TABLE IF NOT EXISTS scan_findings (
   id BIGSERIAL PRIMARY KEY,
   job_id UUID NOT NULL REFERENCES scan_jobs(id) ON DELETE CASCADE,

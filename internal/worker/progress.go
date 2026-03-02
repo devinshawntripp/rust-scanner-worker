@@ -275,7 +275,11 @@ func TailProgress(ctx context.Context, st *db.Store, jobID, progressPath string)
 			if len(line) > 0 {
 				var evt model.ProgressEvent
 				if json.Unmarshal(line, &evt) == nil {
+					// Prefer scanner-emitted pct (v1.8.8+), fall back to hardcoded derivePct
 					p := derivePct(evt.Stage, evt.Detail)
+					if evt.Pct != nil && *evt.Pct > 0 {
+						p = *evt.Pct
+					}
 					if p < lastPct {
 						p = lastPct
 					} else {
