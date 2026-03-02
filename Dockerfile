@@ -21,7 +21,7 @@ FROM debian:trixie-slim
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    bash ca-certificates curl gawk libssl3 rpm libarchive-tools && \
+    bash ca-certificates curl gawk libssl3 rpm libarchive-tools p7zip-full && \
     rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /out/worker /usr/local/bin/worker
