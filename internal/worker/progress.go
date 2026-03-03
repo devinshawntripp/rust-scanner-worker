@@ -170,6 +170,18 @@ func derivePct(stage, detail string) int {
 			return pctFromDetail(detail, 60, 95)
 		}
 		return 60
+
+	// Scanner init / pre-pipeline events — keep pct low
+	case s == "scan.pipeline":
+		return 3
+	case strings.HasPrefix(s, "cache."):
+		return 5
+	case strings.HasPrefix(s, "scanner."):
+		return 8
+	case strings.HasPrefix(s, "dmg."):
+		return pctFromDetail(detail, 8, 40)
+	case strings.HasPrefix(s, "archive."):
+		return pctFromDetail(detail, 8, 40)
 	}
 
 	if strings.HasSuffix(s, ".done") || strings.HasSuffix(s, ".ok") {
