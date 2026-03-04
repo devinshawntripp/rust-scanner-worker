@@ -27,7 +27,7 @@ func main() {
 	cfg := config.Load()
 	ctx := context.Background()
 
-	store, err := db.Open(ctx, cfg.DatabaseURL)
+	store, err := db.Open(ctx, cfg.DatabaseURL, 2)
 	if err != nil {
 		log.Fatalf("db open: %v", err)
 	}

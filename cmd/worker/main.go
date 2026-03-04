@@ -30,7 +30,7 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 
-	store, err := db.Open(ctx, cfg.DatabaseURL)
+	store, err := db.Open(ctx, cfg.DatabaseURL, cfg.WorkerConcurrency)
 	if err != nil {
 		log.Fatal(err)
 	}

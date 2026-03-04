@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -17,11 +18,38 @@ const batchSize = 100
 
 type Store struct{ Pool *pgxpool.Pool }
 
-func Open(ctx context.Context, url string) (*Store, error) {
-	p, err := pgxpool.New(ctx, url)
+// poolConfig parses the given database URL and applies explicit connection pool
+// sizing based on the worker concurrency. The formula is:
+//
+//	MaxConns = concurrency + 4
+//
+// The +4 accounts for: heartbeat goroutine, stale sweep, startup recovery, and
+// the healthz probe — all of which may hold a connection concurrently.
+func poolConfig(url string, concurrency int) (*pgxpool.Config, error) {
+	cfg, err := pgxpool.ParseConfig(url)
+	if err != nil {
+		return nil, fmt.Errorf("parse db config: %w", err)
+	}
+	cfg.MaxConns = int32(concurrency + 4)
+	cfg.MinConns = 1
+	cfg.MaxConnLifetime = time.Hour
+	cfg.MaxConnIdleTime = 30 * time.Minute
+	return cfg, nil
+}
+
+// Open opens a PostgreSQL connection pool sized for the given worker concurrency.
+// MaxConns is set to concurrency+4 to account for the job workers plus background
+// goroutines (heartbeat, stale sweep, startup recovery, healthz probe).
+func Open(ctx context.Context, url string, concurrency int) (*Store, error) {
+	cfg, err := poolConfig(url, concurrency)
 	if err != nil {
 		return nil, err
 	}
+	p, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("create pool: %w", err)
+	}
+	log.Printf("db: pool opened MaxConns=%d (WORKER_CONCURRENCY=%d)", cfg.MaxConns, concurrency)
 	return &Store{Pool: p}, nil
 }
 
