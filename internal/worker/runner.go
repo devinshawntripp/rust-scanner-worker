@@ -18,6 +18,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/sony/gobreaker"
 	"github.com/yourorg/scanner-worker/internal/config"
 	"github.com/yourorg/scanner-worker/internal/db"
 	"github.com/yourorg/scanner-worker/internal/model"
@@ -29,6 +30,7 @@ type Runner struct {
 	db       *db.Store
 	s3       *s3.Client
 	workerID string
+	breaker  *gobreaker.CircuitBreaker
 }
 
 type scannerSettingsSnapshot struct {
@@ -61,6 +63,7 @@ func NewRunner(cfg config.Config, store *db.Store, s3c *s3.Client) *Runner {
 		db:       store,
 		s3:       s3c,
 		workerID: uuid.New().String(),
+		breaker:  newScannerBreaker(),
 	}
 }
 
@@ -205,24 +208,40 @@ func (r *Runner) processJob(ctx context.Context, j *db.Job) error {
 	stopTail := TailProgress(ctx, r.db, j.ID, progressPath)
 	defer stopTail()
 
-	if err := cmd.Start(); err != nil {
-		log.Printf("job %s: scanrook start error: %v", j.ID, err)
-		return fmt.Errorf("start scanrook: %w", err)
-	}
-	scanErr := cmd.Wait()
+	_, scanErr := r.breaker.Execute(func() (interface{}, error) {
+		if err := cmd.Start(); err != nil {
+			log.Printf("job %s: scanrook start error: %v", j.ID, err)
+			return nil, fmt.Errorf("start scanrook: %w", err)
+		}
+		if err := cmd.Wait(); err != nil {
+			// Timeouts do NOT count as circuit breaker failures — only
+			// structural failures (missing binary, OOM, permission errors) do.
+			if scanCtx.Err() == context.DeadlineExceeded {
+				return nil, nil // success from breaker's perspective
+			}
+			return nil, fmt.Errorf("scanrook failed: %w", err)
+		}
+		return nil, nil
+	})
 	if s := strings.TrimSpace(scannerStdout.String()); s != "" {
 		log.Printf("job %s: scanrook stdout: %s", j.ID, s)
 	}
 	if s := strings.TrimSpace(scannerStderr.String()); s != "" {
 		log.Printf("job %s: scanrook stderr: %s", j.ID, s)
 	}
+	if errors.Is(scanErr, gobreaker.ErrOpenState) {
+		log.Printf("job %s: scanner circuit breaker open", j.ID)
+		return fmt.Errorf("circuit breaker open: scanner unavailable")
+	}
 	if scanErr != nil {
-		if scanCtx.Err() == context.DeadlineExceeded {
-			log.Printf("job %s: scanrook timed out after %s", j.ID, scanTimeout)
-			return fmt.Errorf("scanrook timed out after %s", scanTimeout)
-		}
 		log.Printf("job %s: scanrook failed: %v", j.ID, scanErr)
-		return fmt.Errorf("scanrook failed: %w", scanErr)
+		return scanErr
+	}
+	// Handle the timeout case: Execute returned nil but the context timed out
+	// because the timeout was swallowed inside the Execute callback.
+	if scanCtx.Err() == context.DeadlineExceeded {
+		log.Printf("job %s: scanrook timed out after %s", j.ID, scanTimeout)
+		return fmt.Errorf("scanrook timed out after %s", scanTimeout)
 	}
 
 	// Upload the report with retry (3 attempts, 200ms base delay)
