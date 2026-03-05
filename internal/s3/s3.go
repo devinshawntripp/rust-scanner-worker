@@ -88,6 +88,15 @@ func (c *Client) DownloadToFile(ctx context.Context, bucket, key, filePath strin
 	return nil
 }
 
+// GetObjectSize returns the size in bytes of an S3 object without downloading it.
+func (c *Client) GetObjectSize(ctx context.Context, bucket, key string) (int64, error) {
+	info, err := c.mc.StatObject(ctx, bucket, key, minio.StatObjectOptions{})
+	if err != nil {
+		return 0, fmt.Errorf("stat s3://%s/%s: %w", bucket, key, err)
+	}
+	return info.Size, nil
+}
+
 func (c *Client) UploadFile(ctx context.Context, bucket, key, filePath string, contentType string) error {
 	_, err := c.mc.FPutObject(ctx, bucket, key, filePath, minio.PutObjectOptions{
 		ContentType: contentType,
