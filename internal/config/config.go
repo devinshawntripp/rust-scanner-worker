@@ -82,7 +82,7 @@ func Load() Config {
 		StaleSweepSeconds:      getInt("WORKER_STALE_SWEEP_SECONDS", 60),
 		WorkerHeartbeatSeconds:     getInt("WORKER_HEARTBEAT_SECONDS", 60),
 		ScannerTimeoutSeconds:     getInt("SCANNER_TIMEOUT_SECONDS", 1800),
-		MaxArtifactBytes:          getInt64("MAX_ARTIFACT_BYTES", 10737418240),
+		MaxArtifactBytes:          getInt64("MAX_ARTIFACT_BYTES", 21474836480),
 		WorkerIngestTimeoutSeconds: getInt("WORKER_INGEST_TIMEOUT_SECONDS", 300),
 		HTTPAddr:                  os.Getenv("HTTP_ADDR"),
 	}
@@ -109,7 +109,7 @@ func Load() Config {
 		cfg.ScannerTimeoutSeconds = 1800
 	}
 	if cfg.MaxArtifactBytes <= 0 {
-		cfg.MaxArtifactBytes = 10737418240 // 10 GiB
+		cfg.MaxArtifactBytes = 21474836480 // 20 GiB
 	}
 	if cfg.WorkerIngestTimeoutSeconds <= 0 {
 		cfg.WorkerIngestTimeoutSeconds = 300
