@@ -120,6 +120,16 @@ func (r *Runner) processJob(ctx context.Context, j *db.Job) error {
 	progressPath := filepath.Join(scratch, "progress.ndjson")
 	reportPath := filepath.Join(scratch, "report.json")
 
+	// Pre-flight size check: fail fast before downloading oversized artifacts
+	if objSize, sizeErr := r.s3.GetObjectSize(ctx, j.Bucket, j.ObjectKey); sizeErr == nil {
+		if objSize > r.cfg.MaxArtifactBytes {
+			errMsg := fmt.Sprintf("artifact size %s exceeds maximum allowed %s",
+				humanBytes(objSize), humanBytes(r.cfg.MaxArtifactBytes))
+			log.Printf("job %s: pre-flight check: %s", j.ID, errMsg)
+			return fmt.Errorf("%s", errMsg)
+		}
+	}
+
 	// Emit early worker-side progress so large object downloads are visible in UI.
 	{
 		p := 1
