@@ -874,3 +874,17 @@ func (s *Store) GetJob(ctx context.Context, id string) (*Job, error) {
 	}
 	return &j, nil
 }
+
+// RequeueJob sets a running job back to queued status so it can be
+// re-acquired by the dispatcher. Used when a tier is at capacity.
+func (s *Store) RequeueJob(ctx context.Context, id string) error {
+	_, err := s.Pool.Exec(ctx, `
+		UPDATE scan_jobs
+		SET status = 'queued', worker_id = NULL, progress_pct = 0,
+		    started_at = NULL, progress_msg = 're-queued: tier at capacity'
+		WHERE id = $1 AND status = 'running'`, id)
+	if err == nil {
+		s.notifyJobChanged(ctx, id)
+	}
+	return err
+}
