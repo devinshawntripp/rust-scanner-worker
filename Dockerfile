@@ -14,6 +14,8 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
     go build -trimpath -ldflags="-s -w" -o /out/backfill ./cmd/backfill
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
     go build -trimpath -ldflags="-s -w" -o /out/runjob ./cmd/runjob
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build -trimpath -ldflags="-s -w" -o /out/dispatcher ./cmd/dispatcher
 
 ############################
 # 1b) Build hfsutils from source with GCC-13
@@ -60,6 +62,7 @@ COPY --from=scanner-install /usr/local/bin/scanrook /usr/local/bin/scanrook
 COPY --from=build /out/worker /usr/local/bin/worker
 COPY --from=build /out/backfill /usr/local/bin/worker-backfill
 COPY --from=build /out/runjob /usr/local/bin/runjob
+COPY --from=build /out/dispatcher /usr/local/bin/dispatcher
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY entrypoint-runjob.sh /usr/local/bin/entrypoint-runjob.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/entrypoint-runjob.sh
