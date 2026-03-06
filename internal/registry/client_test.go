@@ -20,6 +20,26 @@ func TestResolvePublicImage(t *testing.T) {
 	}
 }
 
+func TestListTags(t *testing.T) {
+	tags, err := registry.ListTags("registry-1.docker.io", "library/alpine", nil)
+	if err != nil {
+		t.Fatalf("ListTags: %v", err)
+	}
+	if len(tags) < 10 {
+		t.Fatalf("expected many tags, got %d", len(tags))
+	}
+	found := false
+	for _, tag := range tags {
+		if tag == "latest" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("expected 'latest' tag")
+	}
+}
+
 func TestImageSize(t *testing.T) {
 	size, err := registry.ImageSize("alpine:3.20", nil)
 	if err != nil {

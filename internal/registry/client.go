@@ -38,6 +38,16 @@ func ResolveImage(ref string, creds *Credentials) (v1.Image, error) {
 	return desc.Image()
 }
 
+// ListTags returns all tags for a repository on a given registry.
+func ListTags(registryURL, repository string, creds *Credentials) ([]string, error) {
+	repo, err := name.NewRepository(registryURL + "/" + repository)
+	if err != nil {
+		return nil, fmt.Errorf("parse repo: %w", err)
+	}
+	opts := []remote.Option{remote.WithAuth(authenticator(creds))}
+	return remote.List(repo, opts...)
+}
+
 // ImageSize returns the total compressed layer size in bytes.
 func ImageSize(ref string, creds *Credentials) (int64, error) {
 	img, err := ResolveImage(ref, creds)
