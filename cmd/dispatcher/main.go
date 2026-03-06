@@ -88,7 +88,9 @@ func main() {
 		StaleSweepSeconds:      staleSweep,
 	}
 
-	// ---- health endpoint ----
+	d := dispatcher.New(dcfg, store, s3, k8sClient)
+
+	// ---- HTTP server (health + job management) ----
 	if httpAddr != "" {
 		go func() {
 			mux := http.NewServeMux()
@@ -103,11 +105,12 @@ func main() {
 				w.WriteHeader(http.StatusOK)
 				_, _ = w.Write([]byte(`{"status":"healthy"}`))
 			})
+			d.RegisterHandlers(mux)
 			srv := &http.Server{Addr: httpAddr, Handler: mux}
 			go func() { <-ctx.Done(); _ = srv.Shutdown(context.Background()) }()
-			log.Printf("health endpoint listening on %s", httpAddr)
+			log.Printf("HTTP server listening on %s (health + job management)", httpAddr)
 			if err := srv.ListenAndServe(); err != http.ErrServerClosed {
-				log.Printf("health server error: %v", err)
+				log.Printf("HTTP server error: %v", err)
 			}
 		}()
 	}
@@ -116,7 +119,6 @@ func main() {
 	workerID := uuid.New().String()
 	log.Printf("dispatcher starting: id=%s namespace=%s image=%s", workerID, namespace, image)
 
-	d := dispatcher.New(dcfg, store, s3, k8sClient)
 	if err := d.Run(ctx, workerID); err != nil {
 		log.Fatal(err)
 	}

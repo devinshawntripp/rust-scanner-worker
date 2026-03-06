@@ -560,7 +560,7 @@ func (s *Store) EnsureSchema(ctx context.Context) error {
 	_, err := s.Pool.Exec(ctx, `
 CREATE TABLE IF NOT EXISTS scan_jobs (
   id UUID PRIMARY KEY,
-  status TEXT NOT NULL CHECK (status IN ('queued','running','done','failed','deleting')),
+  status TEXT NOT NULL CHECK (status IN ('queued','running','done','failed','deleting','cancelled')),
   bucket TEXT NOT NULL,
   object_key TEXT NOT NULL,
   mode TEXT NOT NULL DEFAULT 'light',
@@ -600,7 +600,7 @@ BEGIN
     ALTER TABLE scan_jobs DROP CONSTRAINT scan_jobs_status_check;
   END IF;
   ALTER TABLE scan_jobs
-    ADD CONSTRAINT scan_jobs_status_check CHECK (status IN ('queued','running','done','failed','deleting'));
+    ADD CONSTRAINT scan_jobs_status_check CHECK (status IN ('queued','running','done','failed','deleting','cancelled'));
 EXCEPTION
   WHEN duplicate_object THEN NULL;
 END$$;
@@ -887,4 +887,44 @@ func (s *Store) RequeueJob(ctx context.Context, id string) error {
 		s.notifyJobChanged(ctx, id)
 	}
 	return err
+}
+
+// CancelJob transitions a queued or running job to cancelled status.
+// Returns true if the job was actually cancelled (was in a cancellable state).
+func (s *Store) CancelJob(ctx context.Context, id string) (bool, error) {
+	tag, err := s.Pool.Exec(ctx, `
+		UPDATE scan_jobs
+		SET status = 'cancelled', finished_at = now(),
+		    error_msg = 'cancelled by user',
+		    progress_msg = 'cancelled'
+		WHERE id = $1 AND status IN ('queued', 'running')`, id)
+	if err != nil {
+		return false, err
+	}
+	if tag.RowsAffected() > 0 {
+		_ = s.InsertEvent(ctx, id, time.Now(), "job.cancelled", "cancelled by user", nil)
+		s.notifyJobChanged(ctx, id)
+		return true, nil
+	}
+	return false, nil
+}
+
+// RequeueCancelledOrFailed resets a cancelled or failed job back to queued.
+func (s *Store) RequeueCancelledOrFailed(ctx context.Context, id string) (bool, error) {
+	tag, err := s.Pool.Exec(ctx, `
+		UPDATE scan_jobs
+		SET status = 'queued', worker_id = NULL,
+		    started_at = NULL, finished_at = NULL,
+		    progress_pct = 0, progress_msg = 're-queued by user',
+		    error_msg = NULL
+		WHERE id = $1 AND status IN ('cancelled', 'failed')`, id)
+	if err != nil {
+		return false, err
+	}
+	if tag.RowsAffected() > 0 {
+		_ = s.InsertEvent(ctx, id, time.Now(), "job.requeued", "re-queued by user", nil)
+		s.notifyJobChanged(ctx, id)
+		return true, nil
+	}
+	return false, nil
 }
