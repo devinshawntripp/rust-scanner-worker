@@ -83,7 +83,8 @@ func BuildScanJob(opts ScanJobOpts) *batchv1.Job {
 					Containers: []corev1.Container{
 						{
 							Name:    "scan",
-							Image:   opts.Image,
+							Image:           opts.Image,
+							ImagePullPolicy: corev1.PullAlways,
 							Command: []string{"/usr/local/bin/entrypoint-runjob.sh"},
 							Env:     envs,
 							EnvFrom: envFromSources,
