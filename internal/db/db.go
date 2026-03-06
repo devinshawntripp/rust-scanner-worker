@@ -856,3 +856,21 @@ LIMIT $1
 	}
 	return out, nil
 }
+
+// GetJob fetches a single scan job by its UUID.
+func (s *Store) GetJob(ctx context.Context, id string) (*Job, error) {
+	row := s.Pool.QueryRow(ctx, `
+		SELECT id, status, bucket, object_key, mode, format, refs,
+		       org_id::text, settings_snapshot, progress_pct,
+		       report_bucket, report_key, error_msg, worker_id
+		FROM scan_jobs WHERE id = $1`, id)
+	var j Job
+	err := row.Scan(&j.ID, &j.Status, &j.Bucket, &j.ObjectKey,
+		&j.Mode, &j.Format, &j.Refs,
+		&j.OrgID, &j.SettingsJSON, &j.ProgressPct,
+		&j.ReportBucket, &j.ReportKey, &j.ErrorMsg, &j.WorkerID)
+	if err != nil {
+		return nil, fmt.Errorf("get job %s: %w", id, err)
+	}
+	return &j, nil
+}
