@@ -551,7 +551,7 @@ func nullableString(v string) *string {
 }
 
 func (s *Store) Ping(ctx context.Context) error {
-	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	return s.Pool.Ping(ctx)
 }

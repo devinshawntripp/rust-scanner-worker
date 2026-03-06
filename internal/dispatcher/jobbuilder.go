@@ -9,6 +9,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+func strPtr(s string) *string { return &s }
+
 // ScanJobOpts holds the parameters for creating a K8s Job.
 type ScanJobOpts struct {
 	JobID          string
@@ -80,6 +82,18 @@ func BuildScanJob(opts ScanJobOpts) *batchv1.Job {
 					RestartPolicy:                corev1.RestartPolicyNever,
 					ServiceAccountName:           opts.ServiceAccount,
 					TerminationGracePeriodSeconds: &one,
+					DNSPolicy: corev1.DNSNone,
+					DNSConfig: &corev1.PodDNSConfig{
+						Nameservers: []string{"10.96.0.10"},
+						Searches: []string{
+							opts.Namespace + ".svc.cluster.local",
+							"svc.cluster.local",
+							"cluster.local",
+						},
+						Options: []corev1.PodDNSConfigOption{
+							{Name: "ndots", Value: strPtr("5")},
+						},
+					},
 					Containers: []corev1.Container{
 						{
 							Name:    "scan",
