@@ -54,21 +54,24 @@ func Open(ctx context.Context, url string, concurrency int) (*Store, error) {
 }
 
 type Job struct {
-	ID           string
-	Status       string
-	Bucket       string
-	ObjectKey    string
-	Mode         string
-	Format       string
-	Refs         bool
-	OrgID        *string
-	SettingsJSON []byte
-	ProgressPct  int
-	ProgressMsg  *string
-	ReportBucket *string
-	ReportKey    *string
-	ErrorMsg     *string
-	WorkerID     *string
+	ID               string
+	Status           string
+	Bucket           string
+	ObjectKey        string
+	Mode             string
+	Format           string
+	Refs             bool
+	OrgID            *string
+	SettingsJSON     []byte
+	ProgressPct      int
+	ProgressMsg      *string
+	ReportBucket     *string
+	ReportKey        *string
+	ErrorMsg         *string
+	WorkerID         *string
+	SourceType       string  // 'upload' or 'registry'
+	RegistryImage    *string // e.g. "ghcr.io/org/app:v1"
+	RegistryConfigID *string // FK to registry_configs
 }
 
 type BackfillJob struct {
@@ -98,7 +101,8 @@ func (s *Store) AcquireNextQueued(ctx context.Context, workerID string) (*Job, e
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	row := tx.QueryRow(ctx, `
-		SELECT id, bucket, object_key, mode, format, refs, org_id::text, settings_snapshot
+		SELECT id, bucket, object_key, mode, format, refs, org_id::text, settings_snapshot,
+		       COALESCE(source_type, 'upload'), registry_image, registry_config_id::text
 		FROM scan_jobs
 		WHERE status='queued'
 		ORDER BY created_at
@@ -106,7 +110,8 @@ func (s *Store) AcquireNextQueued(ctx context.Context, workerID string) (*Job, e
 		LIMIT 1
 	`)
 	var j Job
-	if err := row.Scan(&j.ID, &j.Bucket, &j.ObjectKey, &j.Mode, &j.Format, &j.Refs, &j.OrgID, &j.SettingsJSON); err != nil {
+	if err := row.Scan(&j.ID, &j.Bucket, &j.ObjectKey, &j.Mode, &j.Format, &j.Refs, &j.OrgID, &j.SettingsJSON,
+		&j.SourceType, &j.RegistryImage, &j.RegistryConfigID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, pgx.ErrNoRows
 		}
@@ -886,13 +891,15 @@ func (s *Store) GetJob(ctx context.Context, id string) (*Job, error) {
 	row := s.Pool.QueryRow(ctx, `
 		SELECT id, status, bucket, object_key, mode, format, refs,
 		       org_id::text, settings_snapshot, progress_pct,
-		       report_bucket, report_key, error_msg, worker_id
+		       report_bucket, report_key, error_msg, worker_id,
+		       COALESCE(source_type, 'upload'), registry_image, registry_config_id::text
 		FROM scan_jobs WHERE id = $1`, id)
 	var j Job
 	err := row.Scan(&j.ID, &j.Status, &j.Bucket, &j.ObjectKey,
 		&j.Mode, &j.Format, &j.Refs,
 		&j.OrgID, &j.SettingsJSON, &j.ProgressPct,
-		&j.ReportBucket, &j.ReportKey, &j.ErrorMsg, &j.WorkerID)
+		&j.ReportBucket, &j.ReportKey, &j.ErrorMsg, &j.WorkerID,
+		&j.SourceType, &j.RegistryImage, &j.RegistryConfigID)
 	if err != nil {
 		return nil, fmt.Errorf("get job %s: %w", id, err)
 	}
