@@ -556,6 +556,30 @@ func (s *Store) Ping(ctx context.Context) error {
 	return s.Pool.Ping(ctx)
 }
 
+// EnsureRegistrySchema creates registry-related tables and columns.
+// Called after EnsureSchema to add M5 registry support.
+func (s *Store) EnsureRegistrySchema(ctx context.Context) error {
+	_, err := s.Pool.Exec(ctx, `
+CREATE TABLE IF NOT EXISTS registry_configs (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id          UUID NOT NULL,
+    name            TEXT NOT NULL,
+    registry_url    TEXT NOT NULL,
+    username        TEXT,
+    token_encrypted BYTEA,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE(org_id, name)
+);
+CREATE INDEX IF NOT EXISTS idx_registry_configs_org ON registry_configs(org_id);
+
+ALTER TABLE scan_jobs ADD COLUMN IF NOT EXISTS source_type TEXT NOT NULL DEFAULT 'upload';
+ALTER TABLE scan_jobs ADD COLUMN IF NOT EXISTS registry_image TEXT;
+ALTER TABLE scan_jobs ADD COLUMN IF NOT EXISTS registry_config_id UUID;
+`)
+	return err
+}
+
 func (s *Store) EnsureSchema(ctx context.Context) error {
 	_, err := s.Pool.Exec(ctx, `
 CREATE TABLE IF NOT EXISTS scan_jobs (
