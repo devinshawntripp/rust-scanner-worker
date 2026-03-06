@@ -12,6 +12,8 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
     go build -trimpath -ldflags="-s -w" -o /out/worker ./cmd/worker
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
     go build -trimpath -ldflags="-s -w" -o /out/backfill ./cmd/backfill
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build -trimpath -ldflags="-s -w" -o /out/runjob ./cmd/runjob
 
 ############################
 # 1b) Build hfsutils from source with GCC-13
@@ -31,8 +33,17 @@ RUN CC=gcc-13 ./configure --prefix=/usr/local --without-tcl --without-tk && \
     make install
 
 ############################
+# 1c) Install scanner binary at build time
+############################
+FROM debian:trixie-slim AS scanner-install
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    bash curl ca-certificates && rm -rf /var/lib/apt/lists/*
+ENV INSTALL_DIR=/usr/local/bin
+RUN curl -fsSL https://scanrook.sh/install | bash
+
+############################
 # 2) Minimal runtime image
-# No scanner binary baked in — downloaded on startup via entrypoint
+# Scanner binary baked in, auto-updates on startup
 ############################
 FROM debian:trixie-slim
 WORKDIR /app
@@ -45,10 +56,13 @@ COPY --from=hfsutils /usr/local/bin/hmount /usr/local/bin/hmount
 COPY --from=hfsutils /usr/local/bin/hcopy /usr/local/bin/hcopy
 COPY --from=hfsutils /usr/local/bin/humount /usr/local/bin/humount
 
+COPY --from=scanner-install /usr/local/bin/scanrook /usr/local/bin/scanrook
 COPY --from=build /out/worker /usr/local/bin/worker
 COPY --from=build /out/backfill /usr/local/bin/worker-backfill
+COPY --from=build /out/runjob /usr/local/bin/runjob
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh
+COPY entrypoint-runjob.sh /usr/local/bin/entrypoint-runjob.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/entrypoint-runjob.sh
 
 ENV SCRATCH_DIR=/scratch \
     SCANNER_PATH=/usr/local/bin/scanrook
