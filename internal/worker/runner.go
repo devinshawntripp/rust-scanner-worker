@@ -182,8 +182,18 @@ func (r *Runner) processJob(ctx context.Context, j *db.Job) error {
 	}
 
 	// Inspect downloaded input for debugging differences
+	{
+		p := 6
+		_ = r.db.UpdateProgress(ctx, j.ID, p, "file.verify.start")
+		_ = r.db.InsertEvent(ctx, j.ID, time.Now(), "file.verify.start", "computing file hash", &p)
+	}
 	if meta, err := inspectFile(inputPath); err == nil {
 		log.Printf("job %s: input size=%dB sha256=%s head=%s", j.ID, meta.Size, meta.SHA256Short, meta.HeadHex)
+	}
+	{
+		p := 7
+		_ = r.db.UpdateProgress(ctx, j.ID, p, "file.verify.done")
+		_ = r.db.InsertEvent(ctx, j.ID, time.Now(), "file.verify.done", "file hash complete", &p)
 	}
 
 	// Place global flags before the subcommand (per scanrook CLI expectations)
