@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -131,12 +132,27 @@ func (d *Dispatcher) Run(ctx context.Context, workerID string) error {
 			rayonThreads = 3
 		}
 
+		// Inherit proxy env vars so scan pods can reach external APIs
+		proxyEnvs := map[string]string{}
+		for _, key := range []string{
+			"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY",
+			"http_proxy", "https_proxy", "no_proxy",
+			"S3_ENDPOINT", "SCANNER_FORCE_IPV4",
+			"SCANNER_OSV_TIMEOUT_SECS", "SCANNER_OSV_RETRIES", "SCANNER_OSV_BACKOFF_MS",
+			"SCANNER_NVD_ENRICH", "SCANNER_NVD_CONC", "SCANNER_NVD_SLEEP_MS", "SCANNER_NVD_SKIP_FULLY_ENRICHED",
+			"SCANNER_REDHAT_ENRICH", "SCANNER_REDHAT_TIMEOUT_SECS", "SCANNER_REDHAT_SLEEP_MS", "SCANNER_REDHAT_TTL_DAYS",
+		} {
+			if v := os.Getenv(key); v != "" {
+				proxyEnvs[key] = v
+			}
+		}
+
 		scanJob := BuildScanJob(ScanJobOpts{
 			JobID:          job.ID,
 			Namespace:      d.cfg.Namespace,
 			Image:          d.cfg.Image,
 			Tier:           tier,
-			EnvVars:        map[string]string{},
+			EnvVars:        proxyEnvs,
 			EnvFromSecret:  d.cfg.EnvFromSecret,
 			EnvFromConfig:  d.cfg.EnvFromConfig,
 			RayonThreads:   rayonThreads,
