@@ -80,6 +80,8 @@ func main() {
 	dcfg := dispatcher.DispatcherConfig{
 		Namespace:              namespace,
 		Image:                  image,
+		RegistryPullerImage:    os.Getenv("REGISTRY_PULLER_IMAGE"),
+		RegistryEncryptionKey:  os.Getenv("REGISTRY_ENCRYPTION_KEY"),
 		ServiceAccount:         os.Getenv("DISPATCHER_SERVICE_ACCOUNT"),
 		EnvFromSecret:          os.Getenv("DISPATCHER_ENV_SECRET"),
 		EnvFromConfig:          os.Getenv("DISPATCHER_ENV_CONFIGMAP"),

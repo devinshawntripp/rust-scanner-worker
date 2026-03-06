@@ -11,6 +11,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
+	registryCrypto "github.com/yourorg/scanner-worker/internal/crypto"
 	"github.com/yourorg/scanner-worker/internal/db"
 	"github.com/yourorg/scanner-worker/internal/s3"
 )
@@ -19,6 +20,8 @@ import (
 type DispatcherConfig struct {
 	Namespace              string
 	Image                  string
+	RegistryPullerImage    string // image for registry-puller init container
+	RegistryEncryptionKey  string // hex-encoded AES-256-GCM key for decrypting registry tokens
 	ServiceAccount         string
 	EnvFromSecret          string
 	EnvFromConfig          string
@@ -107,14 +110,22 @@ func (d *Dispatcher) Run(ctx context.Context, workerID string) error {
 			continue
 		}
 
-		objSize, err := d.s3.GetObjectSize(ctx, job.Bucket, job.ObjectKey)
-		if err != nil {
-			log.Printf("dispatcher: job %s: failed to get object size: %v", job.ID, err)
-			_ = d.db.MarkFailed(ctx, job.ID, "failed to get artifact size: "+err.Error())
-			continue
-		}
+		// Determine tier — registry jobs skip S3 size check (object doesn't exist yet)
+		var tier ResourceTier
+		isRegistry := job.SourceType == "registry"
 
-		tier := ClassifyTier(objSize)
+		if isRegistry {
+			// Registry jobs use medium tier by default since image size is unknown
+			tier = TierMedium
+		} else {
+			objSize, err := d.s3.GetObjectSize(ctx, job.Bucket, job.ObjectKey)
+			if err != nil {
+				log.Printf("dispatcher: job %s: failed to get object size: %v", job.ID, err)
+				_ = d.db.MarkFailed(ctx, job.ID, "failed to get artifact size: "+err.Error())
+				continue
+			}
+			tier = ClassifyTier(objSize)
+		}
 
 		if !canSchedule(tier, activeCounts) {
 			log.Printf("dispatcher: job %s: tier %s at capacity (%d/%d), re-queuing",
@@ -147,6 +158,33 @@ func (d *Dispatcher) Run(ctx context.Context, workerID string) error {
 			}
 		}
 
+		// Resolve registry credentials for init container
+		var regOpts *RegistryInitOpts
+		if isRegistry && job.RegistryImage != nil && job.RegistryConfigID != nil && job.OrgID != nil {
+			regOpts = &RegistryInitOpts{
+				PullerImage:   d.cfg.RegistryPullerImage,
+				RegistryImage: *job.RegistryImage,
+			}
+			creds, err := d.db.GetRegistryCredentials(ctx, *job.RegistryConfigID, *job.OrgID)
+			if err != nil {
+				log.Printf("dispatcher: job %s: failed to get registry creds: %v", job.ID, err)
+				_ = d.db.MarkFailed(ctx, job.ID, "failed to resolve registry credentials: "+err.Error())
+				continue
+			}
+			if creds.Username != nil {
+				regOpts.Username = *creds.Username
+			}
+			if len(creds.TokenEncrypted) > 0 && d.cfg.RegistryEncryptionKey != "" {
+				token, err := registryCrypto.DecryptAES256GCM(d.cfg.RegistryEncryptionKey, creds.TokenEncrypted)
+				if err != nil {
+					log.Printf("dispatcher: job %s: failed to decrypt registry token: %v", job.ID, err)
+					_ = d.db.MarkFailed(ctx, job.ID, "failed to decrypt registry token: "+err.Error())
+					continue
+				}
+				regOpts.Token = token
+			}
+		}
+
 		scanJob := BuildScanJob(ScanJobOpts{
 			JobID:          job.ID,
 			Namespace:      d.cfg.Namespace,
@@ -157,6 +195,7 @@ func (d *Dispatcher) Run(ctx context.Context, workerID string) error {
 			EnvFromConfig:  d.cfg.EnvFromConfig,
 			RayonThreads:   rayonThreads,
 			ServiceAccount: d.cfg.ServiceAccount,
+			Registry:       regOpts,
 		})
 
 		_, err = d.k8s.BatchV1().Jobs(d.cfg.Namespace).Create(ctx, scanJob, metav1.CreateOptions{})
