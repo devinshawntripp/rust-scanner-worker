@@ -353,8 +353,22 @@ func (r *Runner) processJob(ctx context.Context, j *db.Job) error {
 	})
 	if ingestErr != nil {
 		log.Printf("job %s: artifact ingest failed after retries: %v", j.ID, ingestErr)
-		_ = r.db.MarkFailed(ctx, j.ID, "artifact ingest: "+ingestErr.Error())
-		return ingestErr
+		// Scanner completed successfully — mark done with summary rather than
+		// leaving the job stuck in 'running'. The report is already in S3.
+		sumBytes, _ := json.Marshal(report.Summary)
+		scanStatus := optionalString(report.ScanStatus)
+		inventoryStatus := optionalString(report.InventoryStatus)
+		inventoryReason := optionalString(report.InventoryReason)
+		dbctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		markErr := r.db.MarkDone(dbctx, j.ID, r.cfg.ReportsBucket, reportKey, sumBytes, scanStatus, inventoryStatus, inventoryReason)
+		cancel()
+		if markErr != nil {
+			log.Printf("job %s: mark done (after ingest failure) error: %v", j.ID, markErr)
+			_ = r.db.MarkFailed(ctx, j.ID, "mark done: "+markErr.Error())
+		} else {
+			log.Printf("job %s: completed (ingest failed: %v) and marked done (report=%s)", j.ID, ingestErr, reportKey)
+		}
+		return nil
 	}
 
 	// store only the small summary in SQL, full report stays in object storage
