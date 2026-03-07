@@ -1,5 +1,20 @@
 package model
 
+import "encoding/json"
+
+// NdjsonLine represents a single line in NDJSON report output.
+type NdjsonLine struct {
+	Type string          `json:"type"` // "header", "finding", "file", "summary", "metadata"
+	Data json.RawMessage `json:"data"`
+	// Header fields (only when Type == "header")
+	Scanner json.RawMessage `json:"scanner,omitempty"`
+	Target  json.RawMessage `json:"target,omitempty"`
+	// Metadata fields (only when Type == "metadata")
+	ScanStatus      string `json:"scan_status,omitempty"`
+	InventoryStatus string `json:"inventory_status,omitempty"`
+	InventoryReason string `json:"inventory_reason,omitempty"`
+}
+
 type ScanReport struct {
 	ScanStatus      string       `json:"scan_status"`
 	InventoryStatus string       `json:"inventory_status"`

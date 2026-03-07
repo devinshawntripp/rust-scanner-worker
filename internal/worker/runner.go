@@ -1,6 +1,7 @@
 package worker
 
 import (
+	"bufio"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -284,9 +285,33 @@ func (r *Runner) processJob(ctx context.Context, j *db.Job) error {
 		log.Printf("job %s: update progress final failed: %v", j.ID, err)
 	}
 
-	// Stream-parse the report JSON to keep memory proportional to individual
-	// items rather than the entire report.
-	report, err := streamParseReport(reportPath)
+	// Detect report format (JSON vs NDJSON) by peeking at first byte
+	reportFormat := "json"
+	if peekFile, peekErr := os.Open(reportPath); peekErr == nil {
+		peekBuf := make([]byte, 1)
+		if n, _ := peekFile.Read(peekBuf); n > 0 && peekBuf[0] == '{' {
+			// Could be JSON object or NDJSON — check if first line has "type" field
+			peekFile.Seek(0, 0)
+			sc := bufio.NewScanner(peekFile)
+			if sc.Scan() {
+				var probe struct{ Type string `json:"type"` }
+				if json.Unmarshal(sc.Bytes(), &probe) == nil && probe.Type != "" {
+					reportFormat = "ndjson"
+				}
+			}
+		}
+		peekFile.Close()
+	}
+
+	// Stream-parse the report using the detected format.
+	var report *model.ScanReport
+	var err error
+	if reportFormat == "ndjson" {
+		log.Printf("job %s: detected NDJSON report format", j.ID)
+		report, err = streamParseNdjsonReport(reportPath)
+	} else {
+		report, err = streamParseReport(reportPath)
+	}
 	if err != nil {
 		log.Printf("job %s: failed to parse report json: %v", j.ID, err)
 		// Fall back: mark done with empty summary
@@ -356,6 +381,59 @@ func (r *Runner) processJob(ctx context.Context, j *db.Job) error {
 	}
 	log.Printf("job %s: completed and marked done (report=%s)", j.ID, reportKey)
 	return nil
+}
+
+// streamParseNdjsonReport reads a report in NDJSON format (one JSON object
+// per line) and assembles it into a ScanReport. This keeps memory proportional
+// to a single line rather than buffering the entire report.
+func streamParseNdjsonReport(path string) (*model.ScanReport, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("open ndjson report: %w", err)
+	}
+	defer f.Close()
+
+	report := &model.ScanReport{}
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 4*1024*1024), 16*1024*1024) // 16MB max line
+
+	for sc.Scan() {
+		line := sc.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+
+		var ndjson model.NdjsonLine
+		if err := json.Unmarshal(line, &ndjson); err != nil {
+			log.Printf("skipping invalid ndjson line: %v", err)
+			continue
+		}
+
+		switch ndjson.Type {
+		case "finding":
+			var finding model.Finding
+			if err := json.Unmarshal(ndjson.Data, &finding); err == nil {
+				report.Findings = append(report.Findings, finding)
+			}
+		case "file":
+			var file model.FileRow
+			if err := json.Unmarshal(ndjson.Data, &file); err == nil {
+				report.Files = append(report.Files, file)
+			}
+		case "summary":
+			if err := json.Unmarshal(ndjson.Data, &report.Summary); err != nil {
+				log.Printf("failed to parse summary: %v", err)
+			}
+		case "metadata":
+			report.ScanStatus = ndjson.ScanStatus
+			report.InventoryStatus = ndjson.InventoryStatus
+			report.InventoryReason = ndjson.InventoryReason
+		case "header":
+			// Currently unused in ingestion
+		}
+	}
+
+	return report, sc.Err()
 }
 
 // streamParseReport reads a report JSON file using a streaming decoder.
