@@ -94,6 +94,7 @@ func (d *Dispatcher) Run(ctx context.Context, workerID string) error {
 
 		if sweepInterval > 0 && time.Now().After(nextSweep) {
 			d.reapStaleJobs(ctx)
+			d.reconcileFailedK8sJobs(ctx)
 			nextSweep = time.Now().Add(sweepInterval)
 		}
 
@@ -207,6 +208,41 @@ func (d *Dispatcher) Run(ctx context.Context, workerID string) error {
 
 		log.Printf("dispatcher: job %s: created K8s Job scan-%s (tier=%s cpu=%s mem=%s)",
 			job.ID, job.ID, tier.Name, tier.CPURequest, tier.MemoryRequest)
+	}
+}
+
+// reconcileFailedK8sJobs checks for K8s Jobs that have failed (including
+// init container failures like registry-puller) and marks the corresponding
+// scan_jobs rows as failed so they don't stay stuck in 'running'.
+func (d *Dispatcher) reconcileFailedK8sJobs(ctx context.Context) {
+	jobs, err := d.k8s.BatchV1().Jobs(d.cfg.Namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: "app=scanrook-scan",
+	})
+	if err != nil {
+		log.Printf("dispatcher: reconcile: failed to list K8s jobs: %v", err)
+		return
+	}
+	for _, j := range jobs.Items {
+		for _, c := range j.Status.Conditions {
+			if c.Type == batchv1.JobFailed && c.Status == "True" {
+				jobID := j.Labels["scanrook.io/job-id"]
+				if jobID == "" {
+					continue
+				}
+				reason := c.Reason
+				if reason == "" {
+					reason = "K8s Job failed"
+				}
+				msg := fmt.Sprintf("K8s Job %s failed: %s — %s", j.Name, reason, c.Message)
+				log.Printf("dispatcher: job %s: %s", jobID, msg)
+				_ = d.db.MarkFailed(ctx, jobID, msg)
+				_ = d.db.InsertEvent(ctx, jobID, time.Now(), "dispatcher.k8s.failed", msg, nil)
+				// Clean up the failed K8s Job
+				_ = d.k8s.BatchV1().Jobs(d.cfg.Namespace).Delete(ctx,
+					j.Name, metav1.DeleteOptions{})
+				break
+			}
+		}
 	}
 }
 
