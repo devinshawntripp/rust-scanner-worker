@@ -67,7 +67,7 @@ func derivePct(stage, detail string) int {
 		s = base
 	}
 
-	if s == "scan.done" || s == "scan.summary" {
+	if s == "scan.done" || s == "scan.summary" || s == "pipeline.complete" {
 		return 100
 	}
 
@@ -203,7 +203,7 @@ func isErrorStage(stage string) bool {
 
 func isTerminalScanStage(stage string) bool {
 	s := strings.ToLower(strings.TrimSpace(stage))
-	return s == "scan.done" || s == "scan.summary" || s == "scan.err" || s == "scan.error"
+	return s == "scan.done" || s == "scan.summary" || s == "pipeline.complete" || s == "scan.err" || s == "scan.error"
 }
 
 func noisyStageGroup(stage string) (string, bool) {
@@ -319,7 +319,7 @@ func TailProgress(ctx context.Context, st *db.Store, jobID, progressPath string)
 						}
 						_ = st.InsertEvent(ctx, jobID, eventTS, evt.Stage, detail, pctPtr)
 					}
-					if strings.Contains(evt.Stage, "scan.done") {
+					if strings.Contains(evt.Stage, "scan.done") || strings.Contains(evt.Stage, "pipeline.complete") {
 						break
 					}
 				}
