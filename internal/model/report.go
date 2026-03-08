@@ -38,7 +38,12 @@ type Finding struct {
 	Severity       string      `json:"severity"`
 	CVSS           *CVSS       `json:"cvss"`
 	Description    string      `json:"description"`
+	Evidence       []Evidence  `json:"evidence"`
 	References     []Reference `json:"references"`
+	Confidence     string      `json:"confidence,omitempty"`
+	EPSSScore      *float64    `json:"epss_score,omitempty"`
+	EPSSPercentile *float64    `json:"epss_percentile,omitempty"`
+	InKEV          *bool       `json:"in_kev,omitempty"`
 }
 
 type Pkg struct {
@@ -55,6 +60,12 @@ type CVSS struct {
 type Reference struct {
 	Type string `json:"type"`
 	URL  string `json:"url"`
+}
+
+type Evidence struct {
+	Type   string `json:"type"`
+	Path   string `json:"path,omitempty"`
+	Detail string `json:"detail,omitempty"`
 }
 
 type FileRow struct {

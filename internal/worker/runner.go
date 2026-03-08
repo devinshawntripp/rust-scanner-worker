@@ -284,6 +284,11 @@ func (r *Runner) processJob(ctx context.Context, j *db.Job) error {
 	if err := r.db.UpdateProgress(ctx, j.ID, 100, "scan.done"); err != nil {
 		log.Printf("job %s: update progress final failed: %v", j.ID, err)
 	}
+	// Insert terminal event so SSE stream sees scan completion and UI timer stops
+	{
+		p := 100
+		_ = r.db.InsertEvent(ctx, j.ID, time.Now(), "scan.done", "scan completed", &p)
+	}
 
 	// Detect report format (JSON vs NDJSON) by peeking at first byte
 	reportFormat := "json"

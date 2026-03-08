@@ -150,7 +150,7 @@ func (d *Dispatcher) Run(ctx context.Context, workerID string) error {
 			"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY",
 			"http_proxy", "https_proxy", "no_proxy",
 			"S3_ENDPOINT", "SCANNER_FORCE_IPV4",
-			"SCANNER_OSV_TIMEOUT_SECS", "SCANNER_OSV_RETRIES", "SCANNER_OSV_BACKOFF_MS",
+			"SCANNER_OSV_TIMEOUT_SECS", "SCANNER_OSV_RETRIES", "SCANNER_OSV_BACKOFF_MS", "SCANNER_OSV_FETCH_CVE_DETAILS",
 			"SCANNER_NVD_ENRICH", "SCANNER_NVD_CONC", "SCANNER_NVD_SLEEP_MS", "SCANNER_NVD_SKIP_FULLY_ENRICHED",
 			"SCANNER_REDHAT_ENRICH", "SCANNER_REDHAT_TIMEOUT_SECS", "SCANNER_REDHAT_SLEEP_MS", "SCANNER_REDHAT_TTL_DAYS",
 		} {
@@ -161,28 +161,31 @@ func (d *Dispatcher) Run(ctx context.Context, workerID string) error {
 
 		// Resolve registry credentials for init container
 		var regOpts *RegistryInitOpts
-		if isRegistry && job.RegistryImage != nil && job.RegistryConfigID != nil && job.OrgID != nil {
+		if isRegistry && job.RegistryImage != nil {
 			regOpts = &RegistryInitOpts{
 				PullerImage:   d.cfg.RegistryPullerImage,
 				RegistryImage: *job.RegistryImage,
 			}
-			creds, err := d.db.GetRegistryCredentials(ctx, *job.RegistryConfigID, *job.OrgID)
-			if err != nil {
-				log.Printf("dispatcher: job %s: failed to get registry creds: %v", job.ID, err)
-				_ = d.db.MarkFailed(ctx, job.ID, "failed to resolve registry credentials: "+err.Error())
-				continue
-			}
-			if creds.Username != nil {
-				regOpts.Username = *creds.Username
-			}
-			if len(creds.TokenEncrypted) > 0 && d.cfg.RegistryEncryptionKey != "" {
-				token, err := registryCrypto.DecryptAES256GCM(d.cfg.RegistryEncryptionKey, creds.TokenEncrypted)
+			// Look up credentials only for private registries (registry_config_id set)
+			if job.RegistryConfigID != nil && job.OrgID != nil {
+				creds, err := d.db.GetRegistryCredentials(ctx, *job.RegistryConfigID, *job.OrgID)
 				if err != nil {
-					log.Printf("dispatcher: job %s: failed to decrypt registry token: %v", job.ID, err)
-					_ = d.db.MarkFailed(ctx, job.ID, "failed to decrypt registry token: "+err.Error())
+					log.Printf("dispatcher: job %s: failed to get registry creds: %v", job.ID, err)
+					_ = d.db.MarkFailed(ctx, job.ID, "failed to resolve registry credentials: "+err.Error())
 					continue
 				}
-				regOpts.Token = token
+				if creds.Username != nil {
+					regOpts.Username = *creds.Username
+				}
+				if len(creds.TokenEncrypted) > 0 && d.cfg.RegistryEncryptionKey != "" {
+					token, err := registryCrypto.DecryptAES256GCM(d.cfg.RegistryEncryptionKey, creds.TokenEncrypted)
+					if err != nil {
+						log.Printf("dispatcher: job %s: failed to decrypt registry token: %v", job.ID, err)
+						_ = d.db.MarkFailed(ctx, job.ID, "failed to decrypt registry token: "+err.Error())
+						continue
+					}
+					regOpts.Token = token
+				}
 			}
 		}
 
