@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -110,7 +111,11 @@ func (r *Runner) processJob(ctx context.Context, j *db.Job) error {
 
 	scratch := filepath.Join(r.cfg.ScratchDir, j.ID)
 	_ = os.MkdirAll(scratch, 0o700)
-	defer os.RemoveAll(scratch)
+	var sbomWg sync.WaitGroup
+	defer func() {
+		sbomWg.Wait()
+		os.RemoveAll(scratch)
+	}()
 
 	// use original filename to help scanner auto-detect type by extension
 	baseName := filepath.Base(j.ObjectKey)
@@ -415,7 +420,9 @@ func (r *Runner) processJob(ctx context.Context, j *db.Job) error {
 	// Non-blocking SBOM export — scan is already marked done.
 	// Generate CycloneDX, SPDX, and Syft exports in a background goroutine
 	// so the job is visible to the user immediately.
+	sbomWg.Add(1)
 	go func() {
+		defer sbomWg.Done()
 		sbomCtx, sbomCancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer sbomCancel()
 
