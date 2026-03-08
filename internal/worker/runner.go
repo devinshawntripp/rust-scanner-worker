@@ -426,19 +426,27 @@ func (r *Runner) processJob(ctx context.Context, j *db.Job) error {
 		sbomCtx, sbomCancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer sbomCancel()
 
-		r.generateSbomExports(sbomCtx, j.ID, reportPath, r.cfg.ReportsBucket, reportKey)
+		exported := r.generateSbomExports(sbomCtx, j.ID, reportPath, r.cfg.ReportsBucket, reportKey)
 
 		// Generate SBOM diff against previous scan of the same file
 		if j.OrgID != nil {
 			r.generateSbomDiff(sbomCtx, j.ID, *j.OrgID, j.ObjectKey, reportPath, r.cfg.ReportsBucket, reportKey)
 		}
 
-		if err := r.db.UpdateSbomStatus(sbomCtx, j.ID, "ready"); err != nil {
+		sbomStatus := "ready"
+		eventMsg := "SBOM exports ready for download"
+		if exported == 0 {
+			sbomStatus = "failed"
+			eventMsg = "SBOM export failed for all formats"
+			log.Printf("[job=%s] all SBOM exports failed", j.ID)
+		}
+
+		if err := r.db.UpdateSbomStatus(sbomCtx, j.ID, sbomStatus); err != nil {
 			log.Printf("[job=%s] failed to update sbom_status: %v", j.ID, err)
 			return
 		}
 		p := 100
-		if err := r.db.InsertEvent(sbomCtx, j.ID, time.Now(), "sbom_export_complete", "SBOM exports ready for download", &p); err != nil {
+		if err := r.db.InsertEvent(sbomCtx, j.ID, time.Now(), "sbom_export_complete", eventMsg, &p); err != nil {
 			log.Printf("[job=%s] failed to insert sbom event: %v", j.ID, err)
 		}
 	}()

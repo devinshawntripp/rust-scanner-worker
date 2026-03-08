@@ -143,6 +143,9 @@ func (s *Store) UpdateProgress(ctx context.Context, id string, pct int, msg stri
 		WHERE id=$1
 		  AND status='running'
 	`, id, pct, msg)
+	if err == nil {
+		s.notifyJobChanged(ctx, id)
+	}
 	return err
 }
 

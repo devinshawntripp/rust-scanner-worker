@@ -50,7 +50,8 @@ func isSbomFile(path string) bool {
 
 // generateSbomExports runs `scanrook sbom export` for all three formats
 // and uploads the results to S3. This is non-blocking — scan is already marked done.
-func (r *Runner) generateSbomExports(ctx context.Context, jobID, reportPath, reportBucket, reportKey string) {
+// Returns the number of successfully exported formats (0-3).
+func (r *Runner) generateSbomExports(ctx context.Context, jobID, reportPath, reportBucket, reportKey string) int {
 	formats := []struct {
 		name string
 		ext  string
@@ -60,6 +61,7 @@ func (r *Runner) generateSbomExports(ctx context.Context, jobID, reportPath, rep
 		{"syft", "sbom.syft.json"},
 	}
 
+	success := 0
 	for _, f := range formats {
 		outPath := reportPath + "." + f.ext
 		cmd := exec.CommandContext(ctx, r.cfg.ScannerPath,
@@ -83,7 +85,9 @@ func (r *Runner) generateSbomExports(ctx context.Context, jobID, reportPath, rep
 
 		log.Printf("[job=%s] sbom export %s uploaded to %s/%s", jobID, f.name, reportBucket, sbomKey)
 		os.Remove(outPath)
+		success++
 	}
+	return success
 }
 
 // generateSbomDiff finds the previous scan of the same file in the same org,
