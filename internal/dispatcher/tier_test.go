@@ -40,9 +40,18 @@ func TestClassifyTier_Zero(t *testing.T) {
 }
 
 func TestClassifyTier_ExactSmallThreshold(t *testing.T) {
-	tier := ClassifyTier(500 * 1024 * 1024) // exactly 500 MB
+	tier := ClassifyTier(250 * 1024 * 1024) // exactly 250 MB
 	if tier.Name != "medium" {
 		t.Fatalf("exact threshold should be medium, got %s", tier.Name)
+	}
+}
+
+func TestClassifyTier_ContainerTarOOM(t *testing.T) {
+	// 295 MB container tar (e.g. CentOS 7) should be medium tier
+	// to avoid OOM during full enrichment (OSV+NVD+RedHat+EPSS+KEV)
+	tier := ClassifyTier(295 * 1024 * 1024)
+	if tier.Name != "medium" {
+		t.Fatalf("295 MB file should be medium, got %s", tier.Name)
 	}
 }
 

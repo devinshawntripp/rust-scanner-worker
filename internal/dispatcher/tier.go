@@ -27,7 +27,7 @@ var (
 )
 
 const (
-	smallThreshold int64 = 500 * 1024 * 1024      // 500 MB
+	smallThreshold int64 = 250 * 1024 * 1024      // 250 MB — lowered from 500 MB to avoid OOM on container images with full enrichment
 	largeThreshold int64 = 5 * 1024 * 1024 * 1024  // 5 GB
 )
 
