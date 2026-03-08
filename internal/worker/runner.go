@@ -411,6 +411,26 @@ func (r *Runner) processJob(ctx context.Context, j *db.Job) error {
 		return err
 	}
 	log.Printf("job %s: completed and marked done (report=%s)", j.ID, reportKey)
+
+	// Non-blocking SBOM export — scan is already marked done.
+	// Generate CycloneDX, SPDX, and Syft exports in a background goroutine
+	// so the job is visible to the user immediately.
+	go func() {
+		sbomCtx, sbomCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer sbomCancel()
+
+		r.generateSbomExports(sbomCtx, j.ID, reportPath, r.cfg.ReportsBucket, reportKey)
+
+		if err := r.db.UpdateSbomStatus(sbomCtx, j.ID, "ready"); err != nil {
+			log.Printf("[job=%s] failed to update sbom_status: %v", j.ID, err)
+			return
+		}
+		p := 100
+		if err := r.db.InsertEvent(sbomCtx, j.ID, time.Now(), "sbom_export_complete", "SBOM exports ready for download", &p); err != nil {
+			log.Printf("[job=%s] failed to insert sbom event: %v", j.ID, err)
+		}
+	}()
+
 	return nil
 }
 

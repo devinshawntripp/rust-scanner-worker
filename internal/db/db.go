@@ -622,6 +622,7 @@ ALTER TABLE scan_jobs ADD COLUMN IF NOT EXISTS scan_status TEXT;
 ALTER TABLE scan_jobs ADD COLUMN IF NOT EXISTS inventory_status TEXT;
 ALTER TABLE scan_jobs ADD COLUMN IF NOT EXISTS inventory_reason TEXT;
 ALTER TABLE scan_jobs ADD COLUMN IF NOT EXISTS worker_id TEXT;
+ALTER TABLE scan_jobs ADD COLUMN IF NOT EXISTS sbom_status TEXT NOT NULL DEFAULT 'pending';
 
 DO $$
 BEGIN
@@ -749,6 +750,19 @@ CREATE INDEX IF NOT EXISTS idx_scan_packages_job_name_version ON scan_packages(j
 CREATE INDEX IF NOT EXISTS idx_scan_packages_job_source_path ON scan_packages(job_id, source_path);
 `)
 	return err
+}
+
+// UpdateSbomStatus sets the sbom_status column and emits a pg_notify.
+func (s *Store) UpdateSbomStatus(ctx context.Context, jobID, status string) error {
+	_, err := s.Pool.Exec(ctx,
+		`UPDATE scan_jobs SET sbom_status = $1 WHERE id = $2`,
+		status, jobID,
+	)
+	if err != nil {
+		return err
+	}
+	s.notifyJobChanged(ctx, jobID)
+	return nil
 }
 
 func (s *Store) FailStaleRunning(ctx context.Context, idleFor time.Duration) ([]string, error) {
