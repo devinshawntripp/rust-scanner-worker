@@ -142,13 +142,24 @@ func BuildScanJob(opts ScanJobOpts) *batchv1.Job {
 				Name: "REGISTRY_TOKEN", Value: opts.Registry.Token,
 			})
 		}
+		// Inherit proxy env vars so the puller can reach external registries
+		for k, v := range opts.EnvVars {
+			initEnvs = append(initEnvs, corev1.EnvVar{Name: k, Value: v})
+		}
 
-		// Init container gets S3 credentials from the same secret as the scan container
+		// Init container gets S3 credentials from the same secret + config as the scan container
 		var initEnvFrom []corev1.EnvFromSource
 		if opts.EnvFromSecret != "" {
 			initEnvFrom = append(initEnvFrom, corev1.EnvFromSource{
 				SecretRef: &corev1.SecretEnvSource{
 					LocalObjectReference: corev1.LocalObjectReference{Name: opts.EnvFromSecret},
+				},
+			})
+		}
+		if opts.EnvFromConfig != "" {
+			initEnvFrom = append(initEnvFrom, corev1.EnvFromSource{
+				ConfigMapRef: &corev1.ConfigMapEnvSource{
+					LocalObjectReference: corev1.LocalObjectReference{Name: opts.EnvFromConfig},
 				},
 			})
 		}
@@ -158,6 +169,7 @@ func BuildScanJob(opts ScanJobOpts) *batchv1.Job {
 				Name:            "registry-puller",
 				Image:           opts.Registry.PullerImage,
 				ImagePullPolicy: corev1.PullAlways,
+				Command:         []string{"/usr/local/bin/registry-puller"},
 				Env:             initEnvs,
 				EnvFrom:         initEnvFrom,
 				Resources: corev1.ResourceRequirements{
