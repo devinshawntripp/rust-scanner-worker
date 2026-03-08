@@ -197,16 +197,28 @@ func (r *Runner) processJob(ctx context.Context, j *db.Job) error {
 		_ = r.db.InsertEvent(ctx, j.ID, time.Now(), "file.verify.done", "file hash complete", &p)
 	}
 
-	// Place global flags before the subcommand (per scanrook CLI expectations)
-	args := []string{
-		"--progress", "--progress-file", progressPath,
-		"scan", "--file", inputPath,
-		"--format", j.Format, "--out", reportPath,
+	// Place global flags before the subcommand (per scanrook CLI expectations).
+	// If the input is an SBOM file (CycloneDX, SPDX, or Syft), route to
+	// "sbom import" instead of "scan" so the scanner ingests it directly.
+	var args []string
+	if isSbomFile(inputPath) {
+		log.Printf("job %s: detected SBOM file, routing to sbom import", j.ID)
+		args = []string{
+			"--progress", "--progress-file", progressPath,
+			"sbom", "import", "--file", inputPath,
+			"--format", j.Format, "--out", reportPath,
+		}
+	} else {
+		args = []string{
+			"--progress", "--progress-file", progressPath,
+			"scan", "--file", inputPath,
+			"--format", j.Format, "--out", reportPath,
+		}
+		if j.Refs {
+			args = append(args, "--refs")
+		}
+		args = append(args, "--mode", j.Mode)
 	}
-	if j.Refs {
-		args = append(args, "--refs")
-	}
-	args = append(args, "--mode", j.Mode)
 
 	scanTimeout := time.Duration(r.cfg.ScannerTimeoutSeconds) * time.Second
 	scanCtx, scanCancel := context.WithTimeout(ctx, scanTimeout)
