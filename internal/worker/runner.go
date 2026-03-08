@@ -428,6 +428,11 @@ func (r *Runner) processJob(ctx context.Context, j *db.Job) error {
 
 		r.generateSbomExports(sbomCtx, j.ID, reportPath, r.cfg.ReportsBucket, reportKey)
 
+		// Generate SBOM diff against previous scan of the same file
+		if j.OrgID != nil {
+			r.generateSbomDiff(sbomCtx, j.ID, *j.OrgID, j.ObjectKey, reportPath, r.cfg.ReportsBucket, reportKey)
+		}
+
 		if err := r.db.UpdateSbomStatus(sbomCtx, j.ID, "ready"); err != nil {
 			log.Printf("[job=%s] failed to update sbom_status: %v", j.ID, err)
 			return

@@ -765,6 +765,56 @@ func (s *Store) UpdateSbomStatus(ctx context.Context, jobID, status string) erro
 	return nil
 }
 
+// FindPreviousDoneJob finds the most recent completed job in the same org
+// with a matching filename (object_key minus the timestamp prefix).
+func (s *Store) FindPreviousDoneJob(ctx context.Context, jobID, orgID, objectKey string) (*Job, error) {
+	// object_key format: "<timestamp>_<filename>" — strip the timestamp prefix
+	parts := strings.SplitN(objectKey, "_", 2)
+	if len(parts) < 2 {
+		return nil, nil // no underscore → can't match
+	}
+	filenameSuffix := "%" + parts[1]
+
+	row := s.Pool.QueryRow(ctx, `
+		SELECT id, status, bucket, object_key, mode, format, refs, org_id::text,
+		       settings_snapshot, progress_pct, progress_msg,
+		       report_bucket, report_key, error_msg, worker_id,
+		       COALESCE(source_type, 'upload'), registry_image, registry_config_id::text
+		FROM scan_jobs
+		WHERE org_id = $1::uuid
+		  AND id != $2::uuid
+		  AND status = 'done'
+		  AND object_key LIKE $3
+		ORDER BY created_at DESC
+		LIMIT 1
+	`, orgID, jobID, filenameSuffix)
+
+	j := &Job{}
+	err := row.Scan(
+		&j.ID, &j.Status, &j.Bucket, &j.ObjectKey,
+		&j.Mode, &j.Format, &j.Refs, &j.OrgID,
+		&j.SettingsJSON, &j.ProgressPct, &j.ProgressMsg,
+		&j.ReportBucket, &j.ReportKey, &j.ErrorMsg, &j.WorkerID,
+		&j.SourceType, &j.RegistryImage, &j.RegistryConfigID,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("find previous done job: %w", err)
+	}
+	return j, nil
+}
+
+// UpdateSbomDiffSummary stores the diff summary JSON on the job row.
+func (s *Store) UpdateSbomDiffSummary(ctx context.Context, jobID string, diffSummary []byte) error {
+	_, err := s.Pool.Exec(ctx,
+		`UPDATE scan_jobs SET sbom_diff_summary = $1::jsonb WHERE id = $2`,
+		diffSummary, jobID,
+	)
+	return err
+}
+
 func (s *Store) FailStaleRunning(ctx context.Context, idleFor time.Duration) ([]string, error) {
 	seconds := int64(idleFor.Seconds())
 	if seconds <= 0 {
