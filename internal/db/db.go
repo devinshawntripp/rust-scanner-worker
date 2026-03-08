@@ -769,28 +769,50 @@ func (s *Store) UpdateSbomStatus(ctx context.Context, jobID, status string) erro
 }
 
 // FindPreviousDoneJob finds the most recent completed job in the same org
-// with a matching filename (object_key minus the timestamp prefix).
-func (s *Store) FindPreviousDoneJob(ctx context.Context, jobID, orgID, objectKey string) (*Job, error) {
-	// object_key format: "<timestamp>_<filename>" — strip the timestamp prefix
-	parts := strings.SplitN(objectKey, "_", 2)
-	if len(parts) < 2 {
-		return nil, nil // no underscore → can't match
-	}
-	filenameSuffix := "%" + parts[1]
+// that scanned the same artifact. For registry jobs (source_type="registry"),
+// matching is done on the registry_image column. For upload jobs, matching
+// is done on the object_key suffix (stripping the timestamp prefix).
+func (s *Store) FindPreviousDoneJob(ctx context.Context, jobID, orgID, objectKey, sourceType string, registryImage *string) (*Job, error) {
+	var row pgx.Row
 
-	row := s.Pool.QueryRow(ctx, `
-		SELECT id, status, bucket, object_key, mode, format, refs, org_id::text,
-		       settings_snapshot, progress_pct, progress_msg,
-		       report_bucket, report_key, error_msg, worker_id,
-		       COALESCE(source_type, 'upload'), registry_image, registry_config_id::text
-		FROM scan_jobs
-		WHERE org_id = $1::uuid
-		  AND id != $2::uuid
-		  AND status = 'done'
-		  AND object_key LIKE $3
-		ORDER BY created_at DESC
-		LIMIT 1
-	`, orgID, jobID, filenameSuffix)
+	if sourceType == "registry" && registryImage != nil && *registryImage != "" {
+		// Registry jobs: match on the registry_image column
+		row = s.Pool.QueryRow(ctx, `
+			SELECT id, status, bucket, object_key, mode, format, refs, org_id::text,
+			       settings_snapshot, progress_pct, progress_msg,
+			       report_bucket, report_key, error_msg, worker_id,
+			       COALESCE(source_type, 'upload'), registry_image, registry_config_id::text
+			FROM scan_jobs
+			WHERE org_id = $1::uuid
+			  AND id != $2::uuid
+			  AND status = 'done'
+			  AND source_type = 'registry'
+			  AND registry_image = $3
+			ORDER BY created_at DESC
+			LIMIT 1
+		`, orgID, jobID, *registryImage)
+	} else {
+		// Upload jobs: match on object_key suffix (strip timestamp prefix)
+		parts := strings.SplitN(objectKey, "_", 2)
+		if len(parts) < 2 {
+			return nil, nil // no underscore → can't match
+		}
+		filenameSuffix := "%" + parts[1]
+
+		row = s.Pool.QueryRow(ctx, `
+			SELECT id, status, bucket, object_key, mode, format, refs, org_id::text,
+			       settings_snapshot, progress_pct, progress_msg,
+			       report_bucket, report_key, error_msg, worker_id,
+			       COALESCE(source_type, 'upload'), registry_image, registry_config_id::text
+			FROM scan_jobs
+			WHERE org_id = $1::uuid
+			  AND id != $2::uuid
+			  AND status = 'done'
+			  AND object_key LIKE $3
+			ORDER BY created_at DESC
+			LIMIT 1
+		`, orgID, jobID, filenameSuffix)
+	}
 
 	j := &Job{}
 	err := row.Scan(

@@ -93,8 +93,8 @@ func (r *Runner) generateSbomExports(ctx context.Context, jobID, reportPath, rep
 // generateSbomDiff finds the previous scan of the same file in the same org,
 // downloads its report, runs `scanrook sbom diff`, uploads the diff JSON to S3,
 // and stores the summary on the job row.
-func (r *Runner) generateSbomDiff(ctx context.Context, jobID, orgID, objectKey, currentReportPath, reportBucket, reportKey string) {
-	prev, err := r.db.FindPreviousDoneJob(ctx, jobID, orgID, objectKey)
+func (r *Runner) generateSbomDiff(ctx context.Context, jobID, orgID, objectKey, sourceType string, registryImage *string, currentReportPath, reportBucket, reportKey string) {
+	prev, err := r.db.FindPreviousDoneJob(ctx, jobID, orgID, objectKey, sourceType, registryImage)
 	if err != nil {
 		log.Printf("[job=%s] sbom diff: failed to find previous job: %v", jobID, err)
 		return

@@ -430,7 +430,7 @@ func (r *Runner) processJob(ctx context.Context, j *db.Job) error {
 
 		// Generate SBOM diff against previous scan of the same file
 		if j.OrgID != nil {
-			r.generateSbomDiff(sbomCtx, j.ID, *j.OrgID, j.ObjectKey, reportPath, r.cfg.ReportsBucket, reportKey)
+			r.generateSbomDiff(sbomCtx, j.ID, *j.OrgID, j.ObjectKey, j.SourceType, j.RegistryImage, reportPath, r.cfg.ReportsBucket, reportKey)
 		}
 
 		sbomStatus := "ready"
