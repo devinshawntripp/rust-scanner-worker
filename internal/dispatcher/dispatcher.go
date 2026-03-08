@@ -105,6 +105,11 @@ func (d *Dispatcher) Run(ctx context.Context, workerID string) error {
 			continue
 		}
 
+		// Update active pods gauge
+		for _, tier := range []string{"small", "medium", "large"} {
+			ActiveScanPods.WithLabelValues(tier).Set(float64(activeCounts[tier]))
+		}
+
 		job, err := d.db.AcquireNextQueued(ctx, workerID)
 		if err != nil {
 			time.Sleep(pollInterval)
@@ -123,6 +128,7 @@ func (d *Dispatcher) Run(ctx context.Context, workerID string) error {
 			if err != nil {
 				log.Printf("dispatcher: job %s: failed to get object size: %v", job.ID, err)
 				_ = d.db.MarkFailed(ctx, job.ID, "failed to get artifact size: "+err.Error())
+				JobsFailed.WithLabelValues("s3_size_check").Inc()
 				continue
 			}
 			tier = ClassifyTier(objSize)
@@ -132,6 +138,7 @@ func (d *Dispatcher) Run(ctx context.Context, workerID string) error {
 			log.Printf("dispatcher: job %s: tier %s at capacity (%d/%d), re-queuing",
 				job.ID, tier.Name, activeCounts[tier.Name], tier.MaxConcurrent)
 			_ = d.db.RequeueJob(ctx, job.ID)
+			JobsRequeued.Inc()
 			time.Sleep(pollInterval)
 			continue
 		}
@@ -206,9 +213,11 @@ func (d *Dispatcher) Run(ctx context.Context, workerID string) error {
 		if err != nil {
 			log.Printf("dispatcher: job %s: failed to create K8s Job: %v", job.ID, err)
 			_ = d.db.MarkFailed(ctx, job.ID, "failed to create scan job: "+err.Error())
+			JobsFailed.WithLabelValues("k8s_create").Inc()
 			continue
 		}
 
+		JobsDispatched.WithLabelValues(tier.Name).Inc()
 		log.Printf("dispatcher: job %s: created K8s Job scan-%s (tier=%s cpu=%s mem=%s)",
 			job.ID, job.ID, tier.Name, tier.CPURequest, tier.MemoryRequest)
 	}
@@ -240,6 +249,7 @@ func (d *Dispatcher) reconcileFailedK8sJobs(ctx context.Context) {
 				log.Printf("dispatcher: job %s: %s", jobID, msg)
 				_ = d.db.MarkFailed(ctx, jobID, msg)
 				_ = d.db.InsertEvent(ctx, jobID, time.Now(), "dispatcher.k8s.failed", msg, nil)
+				JobsFailed.WithLabelValues("k8s_failed").Inc()
 				// Clean up the failed K8s Job
 				_ = d.k8s.BatchV1().Jobs(d.cfg.Namespace).Delete(ctx,
 					j.Name, metav1.DeleteOptions{})
@@ -262,6 +272,7 @@ func (d *Dispatcher) reapStaleJobs(ctx context.Context) {
 	for _, id := range ids {
 		msg := fmt.Sprintf("no progress for %s", idleFor.Round(time.Second))
 		_ = d.db.InsertEvent(ctx, id, time.Now(), "dispatcher.stale.fail", msg, nil)
+		JobsStaleFailed.Inc()
 		log.Printf("dispatcher: job %s: marked failed by stale sweep", id)
 		_ = d.k8s.BatchV1().Jobs(d.cfg.Namespace).Delete(ctx,
 			fmt.Sprintf("scan-%s", id), metav1.DeleteOptions{})

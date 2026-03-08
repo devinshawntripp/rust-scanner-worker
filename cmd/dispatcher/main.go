@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
@@ -96,6 +97,7 @@ func main() {
 	if httpAddr != "" {
 		go func() {
 			mux := http.NewServeMux()
+			mux.Handle("/metrics", promhttp.Handler())
 			mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 				dbCtx, c := context.WithTimeout(r.Context(), 2*time.Second)
 				defer c()

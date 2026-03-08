@@ -82,6 +82,7 @@ func (d *Dispatcher) handleCancelJob(w http.ResponseWriter, r *http.Request, job
 		}
 	}
 
+	JobsCancelled.Inc()
 	log.Printf("cancel: job %s cancelled (was %s)", jobID, job.Status)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "cancelled", "id": jobID})
 }
