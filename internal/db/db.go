@@ -808,6 +808,7 @@ func (s *Store) FindPreviousDoneJob(ctx context.Context, jobID, orgID, objectKey
 			WHERE org_id = $1::uuid
 			  AND id != $2::uuid
 			  AND status = 'done'
+			  AND COALESCE(source_type, 'upload') = 'upload'
 			  AND object_key LIKE $3
 			ORDER BY created_at DESC
 			LIMIT 1
