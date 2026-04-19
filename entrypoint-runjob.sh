@@ -1,11 +1,11 @@
 #!/bin/bash
 set -e
 
-# Skip scanner self-update by default in K8s Job context (scanner is baked in).
-# Set SCANROOK_AUTO_UPDATE=true to enable.
-if [ "${SCANROOK_AUTO_UPDATE}" = "true" ]; then
+# Auto-update scanner on startup (pulls latest from GitHub releases).
+# Set SCANROOK_AUTO_UPDATE=false to skip and use the baked-in version.
+if [ "${SCANROOK_AUTO_UPDATE}" != "false" ]; then
   SCANROOK_VERSION="${SCANROOK_VERSION:-latest}"
-  echo "Upgrading scanrook ${SCANROOK_VERSION}..."
+  echo "Upgrading scanrook to ${SCANROOK_VERSION}..."
   curl -fsSL --max-time 30 https://scanrook.sh/install | SCANROOK_VERSION="${SCANROOK_VERSION}" INSTALL_DIR=/usr/local/bin bash || echo "WARNING: scanrook upgrade failed, using baked-in version"
 fi
 
