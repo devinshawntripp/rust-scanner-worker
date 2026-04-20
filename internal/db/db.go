@@ -776,7 +776,18 @@ func (s *Store) FindPreviousDoneJob(ctx context.Context, jobID, orgID, objectKey
 	var row pgx.Row
 
 	if sourceType == "registry" && registryImage != nil && *registryImage != "" {
-		// Registry jobs: match on the registry_image column
+		// Registry jobs: match on the image NAME (strip tag/digest) so diffs
+		// compare across versions — e.g. myapp:v1.2 diffs against the previous
+		// scan of myapp:v1.1, not just another scan of the exact same tag.
+		imageName := *registryImage
+		if idx := strings.LastIndex(imageName, ":"); idx > 0 {
+			imageName = imageName[:idx]
+		}
+		if idx := strings.LastIndex(imageName, "@"); idx > 0 {
+			imageName = imageName[:idx]
+		}
+		// Match: registry_image starts with the image name followed by : or @
+		imagePattern := imageName + ":%"
 		row = s.Pool.QueryRow(ctx, `
 			SELECT id, status, bucket, object_key, mode, format, refs, org_id::text,
 			       settings_snapshot, progress_pct, progress_msg,
@@ -787,10 +798,10 @@ func (s *Store) FindPreviousDoneJob(ctx context.Context, jobID, orgID, objectKey
 			  AND id != $2::uuid
 			  AND status = 'done'
 			  AND source_type = 'registry'
-			  AND registry_image = $3
+			  AND (registry_image LIKE $3 OR registry_image = $4)
 			ORDER BY created_at DESC
 			LIMIT 1
-		`, orgID, jobID, *registryImage)
+		`, orgID, jobID, imagePattern, imageName)
 	} else {
 		// Upload jobs: match on object_key suffix (strip timestamp prefix)
 		parts := strings.SplitN(objectKey, "_", 2)
