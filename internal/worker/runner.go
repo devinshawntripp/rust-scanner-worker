@@ -223,6 +223,8 @@ func (r *Runner) processJob(ctx context.Context, j *db.Job) error {
 			args = append(args, "--refs")
 		}
 		args = append(args, "--mode", j.Mode)
+		// CBOM on every scan: cheap collectors, all plan tiers (scanner >= 1.18)
+		args = append(args, "--cbom")
 	}
 
 	scanTimeout := time.Duration(r.cfg.ScannerTimeoutSeconds) * time.Second
