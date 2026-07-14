@@ -57,8 +57,13 @@ func main() {
 	if err != nil {
 		log.Fatalf("db open: %v", err)
 	}
-	if err := store.Ping(ctx); err != nil {
-		log.Fatalf("db ping: %v", err)
+	// Retry the startup ping with bounded backoff. During a CNPG primary
+	// failover the pg-shared-rw ClusterIP briefly has no backend, and Cilium's
+	// connect-time socket LB returns EPERM until the new primary is promoted.
+	// A single ping + Fatalf turns that transient window into a crash-loop, so
+	// absorb it here instead of relying on kubelet restarts.
+	if err := pingWithRetry(ctx, store, 60*time.Second); err != nil {
+		log.Fatalf("db ping (after retries): %v", err)
 	}
 
 	// ---- S3 / MinIO ----
@@ -125,6 +130,34 @@ func main() {
 
 	if err := d.Run(ctx, workerID); err != nil {
 		log.Fatal(err)
+	}
+}
+
+// pingWithRetry pings the DB, retrying with exponential backoff (capped at 5s
+// per attempt) until it succeeds or maxWait elapses. Tolerates the transient
+// connect failures seen during a Postgres primary failover.
+func pingWithRetry(ctx context.Context, store *db.Store, maxWait time.Duration) error {
+	deadline := time.Now().Add(maxWait)
+	backoff := 500 * time.Millisecond
+	var lastErr error
+	for {
+		if err := store.Ping(ctx); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+		if time.Now().Add(backoff).After(deadline) {
+			return lastErr
+		}
+		log.Printf("db ping failed (%v); retrying in %s", lastErr, backoff)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(backoff):
+		}
+		if backoff < 5*time.Second {
+			backoff *= 2
+		}
 	}
 }
 
