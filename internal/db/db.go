@@ -441,13 +441,13 @@ func batchInsertPackages(ctx context.Context, tx pgx.Tx, jobID string, pkgs []mo
 		}
 		chunk := pkgs[start:end]
 
-		const colCount = 9
+		const colCount = 10
 		var sb strings.Builder
 		sb.WriteString(`
-INSERT INTO scan_packages (
-  job_id, name, ecosystem, version, source_kind, source_path,
-  confidence_tier, evidence_source, raw
-) VALUES `)
+	INSERT INTO scan_packages (
+	  job_id, name, ecosystem, version, license, source_kind, source_path,
+	  confidence_tier, evidence_source, raw
+	) VALUES `)
 		args := make([]interface{}, 0, len(chunk)*colCount)
 		for i, pkg := range chunk {
 			if i > 0 {
@@ -456,14 +456,15 @@ INSERT INTO scan_packages (
 			rawJSON, _ := json.Marshal(pkg)
 			base := i*colCount + 1
 			sb.WriteString(fmt.Sprintf(
-				"($%d::uuid, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d::jsonb)",
-				base, base+1, base+2, base+3, base+4, base+5, base+6, base+7, base+8,
+				"($%d::uuid, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d::jsonb)",
+				base, base+1, base+2, base+3, base+4, base+5, base+6, base+7, base+8, base+9,
 			))
 			args = append(args,
 				jobID,
 				pkg.Name,
 				coalesceString(pkg.Ecosystem, "unknown"),
 				pkg.Version,
+				nullableString(pkg.License),
 				coalesceString(pkg.SourceKind, "scanner_inventory"),
 				coalesceString(pkg.SourcePath, ""),
 				coalesceString(pkg.ConfidenceTier, "confirmed_installed"),
@@ -473,10 +474,11 @@ INSERT INTO scan_packages (
 		}
 		sb.WriteString(`
 ON CONFLICT (job_id, name, ecosystem, version, source_kind, source_path)
-DO UPDATE SET
-  confidence_tier = EXCLUDED.confidence_tier,
-  evidence_source = EXCLUDED.evidence_source,
-  raw = EXCLUDED.raw`)
+	DO UPDATE SET
+	  license = EXCLUDED.license,
+	  confidence_tier = EXCLUDED.confidence_tier,
+	  evidence_source = EXCLUDED.evidence_source,
+	  raw = EXCLUDED.raw`)
 
 		if _, err := tx.Exec(ctx, sb.String(), args...); err != nil {
 			return err
@@ -498,6 +500,7 @@ func collectPackages(report *model.ScanReport) []model.PackageRow {
 
 		row.Name = name
 		row.Version = version
+		row.License = strings.TrimSpace(row.License)
 		row.Ecosystem = strings.TrimSpace(row.Ecosystem)
 		row.SourceKind = strings.TrimSpace(row.SourceKind)
 		row.SourcePath = strings.TrimSpace(row.SourcePath)
@@ -534,6 +537,7 @@ func collectPackages(report *model.ScanReport) []model.PackageRow {
 			Name:           finding.Package.Name,
 			Ecosystem:      finding.Package.Ecosystem,
 			Version:        finding.Package.Version,
+			License:        finding.Package.License,
 			SourceKind:     "derived_from_findings",
 			SourcePath:     "",
 			ConfidenceTier: coalesceString(finding.ConfidenceTier, "confirmed_installed"),
@@ -733,9 +737,10 @@ CREATE TABLE IF NOT EXISTS scan_packages (
   id BIGSERIAL PRIMARY KEY,
   job_id UUID NOT NULL REFERENCES scan_jobs(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
-  ecosystem TEXT NOT NULL,
-  version TEXT NOT NULL,
-  source_kind TEXT NOT NULL,
+	  ecosystem TEXT NOT NULL,
+	  version TEXT NOT NULL,
+	  license TEXT,
+	  source_kind TEXT NOT NULL,
   source_path TEXT,
   confidence_tier TEXT NOT NULL DEFAULT 'confirmed_installed',
   evidence_source TEXT NOT NULL DEFAULT 'installed_db',
@@ -751,7 +756,8 @@ CREATE INDEX IF NOT EXISTS idx_scan_files_job_parent_path ON scan_files(job_id, 
 CREATE INDEX IF NOT EXISTS idx_scan_files_job_path ON scan_files(job_id, path);
 CREATE INDEX IF NOT EXISTS idx_scan_packages_job_name_version ON scan_packages(job_id, name, version);
 CREATE INDEX IF NOT EXISTS idx_scan_packages_job_source_path ON scan_packages(job_id, source_path);
-`)
+ALTER TABLE scan_packages ADD COLUMN IF NOT EXISTS license TEXT;
+	`)
 	return err
 }
 

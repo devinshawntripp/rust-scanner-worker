@@ -50,6 +50,7 @@ type Pkg struct {
 	Name      string `json:"name"`
 	Ecosystem string `json:"ecosystem"`
 	Version   string `json:"version"`
+	License   string `json:"license,omitempty"`
 }
 
 type CVSS struct {
@@ -82,6 +83,7 @@ type PackageRow struct {
 	Name           string `json:"name"`
 	Ecosystem      string `json:"ecosystem"`
 	Version        string `json:"version"`
+	License        string `json:"license,omitempty"`
 	SourceKind     string `json:"source_kind"`
 	SourcePath     string `json:"source_path"`
 	ConfidenceTier string `json:"confidence_tier"`
